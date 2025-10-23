@@ -1,0 +1,32 @@
+{
+  "all": true,
+  "include": [
+    "controllers/**/*.js",
+    "models/**/*.js",
+    "middleware/**/*.js",
+    "services/**/*.js",
+    "utils/**/*.js",
+    "routes/**/*.js"
+  ],
+  "exclude": [
+    "node_modules/**",
+    "coverage/**",
+    "tests/**",
+    "scripts/**",
+    "**/*.test.js",
+    "**/*.spec.js",
+    "jest.config.js",
+    "jest.setup.js"
+  ],
+  "reporter": [
+    "text",
+    "text-summary",
+    "html",
+    "lcov"
+  ],
+  "check-coverage": true,
+  "lines": 75,
+  "functions": 70,
+  "branches": 60,
+  "statements": 75
+}

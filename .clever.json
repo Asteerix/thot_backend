@@ -1,0 +1,11 @@
+{
+  "apps": [
+    {
+      "app_id": "app_b73e2919-0361-42d6-ba77-d154856cefb3",
+      "org_id": "user_6f2aebe3-39c0-4f8a-94a0-fbed8d7cccd9",
+      "deploy_url": "git+ssh://git@push-n3-par-clevercloud-customers.services.clever-cloud.com/app_b73e2919-0361-42d6-ba77-d154856cefb3.git",
+      "name": "Thot",
+      "alias": "Thot"
+    }
+  ]
+}

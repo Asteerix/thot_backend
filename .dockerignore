@@ -1,0 +1,60 @@
+# Node modules (seront réinstallés dans le conteneur)
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Fichiers de test
+tests
+coverage
+*.test.js
+*.spec.js
+.nyc_output
+
+# Fichiers de développement
+.env
+.env.local
+.env.development
+.env.test
+nodemon.json
+
+# Logs
+logs
+*.log
+
+# Fichiers temporaires et uploads (seront recréés)
+uploads/*
+test-generated-images/*
+public/uploads/*
+
+# Fichiers de configuration locale
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+docs
+
+# Scripts de développement
+scripts/cleanDatabase.js
+scripts/regenerateDatabase.js
+clean-all.sh
+
+# Fichiers de CI/CD locaux
+.github
+
+# Fichiers de build et cache
+dist
+build
+.cache
