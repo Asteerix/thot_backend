@@ -550,6 +550,9 @@ userSchema.methods.unfollowUser = async function (targetUserId) {
 
 // Add to read history
 userSchema.methods.addToReadHistory = async function (postId) {
+  if (!this.readHistory) {
+    this.readHistory = [];
+  }
   this.readHistory.push({
     post: postId,
     readAt: Date.now()
