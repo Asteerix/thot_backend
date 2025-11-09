@@ -1,4 +1,5 @@
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 
 // Try to load Redis dependencies if available
 let RedisStore, redisClient;
@@ -57,8 +58,8 @@ const createLimiter = (options) => {
       return req.user && req.user.role === 'admin';
     },
     keyGenerator: (req) => {
-      // Use user ID if authenticated, otherwise use IP
-      return req.user ? `user_${req.user._id}` : req.ip;
+      // Use user ID if authenticated, otherwise use IP with IPv6 support
+      return req.user ? `user_${req.user._id}` : ipKeyGenerator(req);
     }
   };
 
@@ -159,7 +160,7 @@ const limiters = {
     message: 'Too many follow actions, please wait.',
     name: 'follow',
     skip: (req) => !req.user, // Only apply to authenticated users
-    keyGenerator: (req) => req.user ? `user_${req.user._id}` : req.ip
+    keyGenerator: (req) => req.user ? `user_${req.user._id}` : ipKeyGenerator(req)
   }),
 
   // Strict rapid action limiter
@@ -169,7 +170,7 @@ const limiters = {
     message: 'Action too fast detected. Please wait.',
     name: 'strict_action',
     keyGenerator: (req) => {
-      const userId = req.user?._id || req.ip;
+      const userId = req.user?._id || ipKeyGenerator(req);
       return `${userId}:${req.path}:${req.body?.postId || req.params?.id}`;
     }
   }),
@@ -180,7 +181,7 @@ const limiters = {
     max: 30, // 30 likes per minute
     message: 'Too many likes! Please wait before continuing.',
     name: 'likes',
-    keyGenerator: (req) => req.user?._id?.toString() || req.ip
+    keyGenerator: (req) => req.user?._id?.toString() || ipKeyGenerator(req)
   }),
 
   // Strict likes limiter (prevent rapid clicking)
@@ -190,7 +191,7 @@ const limiters = {
     message: 'You are clicking too fast! Please slow down.',
     name: 'strict_likes',
     keyGenerator: (req) => {
-      const userId = req.user?._id?.toString() || req.ip;
+      const userId = req.user?._id?.toString() || ipKeyGenerator(req);
       const postId = req.params.id;
       return `${userId}:${postId}`;
     }
@@ -230,8 +231,8 @@ const createDynamicLimiter = (baseLimit) => {
       windowMs: 15 * 60 * 1000,
       max: Math.round(baseLimit * multiplier),
       keyGenerator: (req) => {
-        // Use user ID if authenticated, otherwise use IP
-        return req.user ? `user:${req.user._id}` : req.ip;
+        // Use user ID if authenticated, otherwise use IP with IPv6 support
+        return req.user ? `user:${req.user._id}` : ipKeyGenerator(req);
       }
     });
 
