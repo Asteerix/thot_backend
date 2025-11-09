@@ -19,7 +19,7 @@ router.post('/',
 // Get all questions (paginated) - filter by type='question'
 router.get('/',
   async (req, res, next) => {
-    req.query.type = 'question'; // Force filter by question type
+    req.query.type = 'question';
     next();
   },
   postController.getPosts

@@ -15,6 +15,7 @@ const { applyLikeRateLimiters } = require('../middleware/rateLimiter.middleware'
 
 // Public routes with optional authentication and caching
 router.get('/', optionalAuth, cacheMiddleware('posts', keyGenerators.posts), postController.getPosts);
+router.get('/search', optionalAuth, postController.searchPosts);
 router.get('/check-duplicate', optionalAuth, postController.checkDuplicate);
 router.get('/:id', optionalAuth, cacheMiddleware('posts'), postController.getPost);
 

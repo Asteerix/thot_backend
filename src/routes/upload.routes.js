@@ -26,7 +26,31 @@ router.post('/video',
   auth,
   requireJournalist,
   (req, res, next) => {
-    req.body.type = 'video';
+    req.fileType = 'video';
+    next();
+  },
+  uploadMiddleware,
+  uploadFile
+);
+
+// Podcast upload route
+router.post('/podcast',
+  auth,
+  requireJournalist,
+  (req, res, next) => {
+    req.fileType = 'podcast';
+    next();
+  },
+  uploadMiddleware,
+  uploadFile
+);
+
+// Audio upload route (alias for podcast)
+router.post('/audio',
+  auth,
+  requireJournalist,
+  (req, res, next) => {
+    req.fileType = 'podcast';
     next();
   },
   uploadMiddleware,
@@ -38,7 +62,7 @@ router.post('/image',
   auth,
   requireJournalist,
   (req, res, next) => {
-    req.body.type = 'article';  // Use article type for general images
+    req.fileType = 'article';  // Use article type for general images
     next();
   },
   uploadMiddleware,
@@ -50,8 +74,7 @@ router.post('/image',
 router.post('/profile',
   auth,
   (req, res, next) => {
-    req.body.type = 'profile';
-    req.fileType = 'profile'; // Also set fileType for the fileFilter
+    req.fileType = 'profile'; // Set fileType for the fileFilter
     next();
   },
   uploadMiddleware,
@@ -63,8 +86,7 @@ router.post('/profile',
 router.post('/cover',
   auth,
   (req, res, next) => {
-    req.body.type = 'cover';
-    req.fileType = 'cover'; // Also set fileType for the fileFilter
+    req.fileType = 'cover'; // Set fileType for the fileFilter
     next();
   },
   uploadMiddleware,

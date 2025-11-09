@@ -3,6 +3,7 @@ const User = require('../models/user.model');
 const Post = require('../models/post.model');
 const Short = require('../models/short.model');
 const { buildMediaUrl } = require('../utils/urlHelper');
+const NotificationService = require('../services/notification.service');
 
 // Get user's saved posts
 exports.getSavedPosts = async (req, res) => {
@@ -494,6 +495,11 @@ exports.followJournalist = async (req, res) => {
       { _id: req.params.journalistId },
       { $set: { 'stats.followers': journalist.followers.length } }
     );
+
+    // Send follow notification (non-blocking)
+    NotificationService.notifyFollow(req.user._id, req.params.journalistId).catch(err => {
+      console.error('[FOLLOW] Notification error:', err);
+    });
 
     res.json({
       success: true,

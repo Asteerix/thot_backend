@@ -1,120 +1,46 @@
-/* eslint-disable */
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const sizeOf = require('image-size');
 const User = require('../models/user.model');
-const { buildUrl } = require('../utils/urlHelper');
+const s3Service = require('../services/s3.service');
 const videoProcessor = require('../services/videoProcessor.service');
 
-// Aspect ratio validation - only for image files
 const validateImageAspectRatio = (filePath, type, mimetype) => {
   try {
-    // Skip validation for non-image files
     if (!mimetype || !mimetype.startsWith('image/')) {
       return true;
     }
 
     const dimensions = sizeOf(filePath);
     const aspectRatio = dimensions.width / dimensions.height;
-    
-    // Allow small deviation (0.1) from exact ratios
+
     const isWithinRange = (ratio, target) => Math.abs(ratio - target) < 0.1;
 
     switch (type) {
     case 'question':
-      // Landscape 16:9
       return isWithinRange(aspectRatio, 16/9);
     case 'short':
-      // Portrait 9:16
       return isWithinRange(aspectRatio, 9/16);
     case 'article':
     case 'video':
     case 'podcast':
-      // Square 1:1
       return isWithinRange(aspectRatio, 1);
     default:
-      return true; // No validation for other types
+      return true;
     }
   } catch (error) {
     console.log('[UPLOAD] Could not validate aspect ratio for file:', filePath, error.message);
-    return true; // Allow file if we can't validate (e.g., for video files)
+    return true;
   }
 };
 
-// Configure multer for file upload
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    // Get type from URL path, query params, or pre-set by middleware
-    let type = req.query.type || req.body.type || req.fileType || 'misc';
-    
-    // Deduce type from URL if not provided
-    if (!type || type === 'misc') {
-      if (req.originalUrl.includes('/upload/profile')) {
-        type = 'profile';
-      } else if (req.originalUrl.includes('/upload/cover')) {
-        type = 'cover';
-      }
-    }
-    
-    // For podcasts, store audio files in podcast directory
-    if (type === 'podcast' && file.mimetype.startsWith('audio/')) {
-      type = 'podcast';
-    }
-    
-    // Ensure absolute path from project root
-    const dir = path.resolve(process.cwd(), `uploads/${type}`);
-    console.log('[UPLOAD] Creating directory:', dir);
+const storage = multer.memoryStorage();
 
-    // Create directory if it doesn't exist
-    try {
-      if (!fsSync.existsSync(dir)) {
-        fsSync.mkdirSync(dir, { recursive: true });
-        console.log('[UPLOAD] Created directory:', dir);
-      }
-    } catch (error) {
-      console.error('[UPLOAD] Error creating directory:', error);
-      cb(error);
-      return;
-    }
-
-    console.log('[UPLOAD] Destination directory:', dir);
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    // Generate unique filename
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    
-    // Determine file type and extension
-    const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.MOV'];
-    const audioExtensions = ['.mp3', '.wav', '.m4a', '.aac'];
-    const isVideo = file.mimetype.startsWith('video/') ||
-                   videoExtensions.some(ext => file.originalname.toLowerCase().endsWith(ext.toLowerCase()));
-    const isAudio = file.mimetype.startsWith('audio/') ||
-                   audioExtensions.some(ext => file.originalname.toLowerCase().endsWith(ext.toLowerCase()));
-
-    let extension;
-    if (isVideo) {
-      extension = '.mp4';
-    } else if (isAudio) {
-      extension = '.mp3';
-    } else {
-      extension = path.extname(file.originalname);
-    }
-
-    const filename = uniqueSuffix + extension;
-    // Generated filename successfully
-    cb(null, filename);
-  }
-});
-
-// File filter
 const fileFilter = (req, file, cb) => {
-  // Get type from URL path, query params, or pre-set by middleware
   let type = req.query.type || req.fileType;
-  
-  // Deduce type from URL if not provided
+
   if (!type) {
     if (req.originalUrl.includes('/upload/profile')) {
       type = 'profile';
@@ -126,24 +52,20 @@ const fileFilter = (req, file, cb) => {
       type = 'article';
     }
   }
-  
+
   let mimeType = file.mimetype;
-  
-  // Handle common video and audio formats that might be misidentified
+
   const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.MOV'];
   const audioExtensions = ['.mp3', '.wav', '.m4a', '.aac'];
-  
+
   if (videoExtensions.some(ext => file.originalname.toLowerCase().endsWith(ext.toLowerCase()))) {
-    mimeType = 'video/mp4'; // Treat all video files as MP4
+    mimeType = 'video/mp4';
   } else if (audioExtensions.some(ext => file.originalname.toLowerCase().endsWith(ext.toLowerCase()))) {
-    mimeType = 'audio/mpeg'; // Treat all audio files as MP3
+    mimeType = 'audio/mpeg';
   }
 
-  // File filter validation
-
-  // Create a validation error with status code
   const validationError = (message, statusCode = 400) => {
-    const _error = new Error(message);
+    const error = new Error(message);
     error.statusCode = statusCode;
     return error;
   };
@@ -151,7 +73,6 @@ const fileFilter = (req, file, cb) => {
   switch (type) {
   case 'video':
   case 'short':
-    // Allow any video format (will be converted to mp4) and images for thumbnails
     if (mimeType.startsWith('video/') || mimeType.startsWith('image/')) {
       cb(null, true);
     } else {
@@ -159,7 +80,6 @@ const fileFilter = (req, file, cb) => {
     }
     break;
   case 'podcast':
-    // Allow audio files and images (for podcast cover)
     if (mimeType.startsWith('audio/') || mimeType.startsWith('image/')) {
       cb(null, true);
     } else {
@@ -174,7 +94,7 @@ const fileFilter = (req, file, cb) => {
   case 'cover':
   case 'question':
   case 'thumbnail':
-  case 'image':  // Allow images for various uses
+  case 'image':
     if (mimeType === 'image/jpeg' || mimeType === 'image/png' || mimeType === 'image/jpg' || mimeType === 'image/webp') {
       cb(null, true);
     } else {
@@ -182,7 +102,6 @@ const fileFilter = (req, file, cb) => {
     }
     break;
   default:
-    // If no type can be determined, just validate mime type
     if (mimeType.startsWith('image/') || mimeType.startsWith('video/') || mimeType.startsWith('audio/')) {
       console.log('[UPLOAD] Warning: No upload type specified, accepting file based on mime type');
       cb(null, true);
@@ -192,27 +111,25 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// File size limits per type
 const getFileSizeLimit = (type) => {
   switch (type) {
   case 'video':
   case 'short':
-    return 500 * 1024 * 1024; // 500MB for videos
+    return 500 * 1024 * 1024;
   case 'podcast':
-    return 100 * 1024 * 1024; // 100MB for audio
+    return 100 * 1024 * 1024;
   case 'profile':
   case 'cover':
   case 'image':
   case 'article':
   case 'question':
   case 'thumbnail':
-    return 10 * 1024 * 1024; // 10MB for images
+    return 10 * 1024 * 1024;
   default:
-    return 10 * 1024 * 1024; // 10MB default
+    return 10 * 1024 * 1024;
   }
 };
 
-// Initialize multer with configuration
 const createUpload = (type) => {
   return multer({
     storage: storage,
@@ -227,8 +144,9 @@ exports.uploadMiddleware = (req, res, next) => {
   console.log('[UPLOAD] Starting upload middleware');
   console.log('[UPLOAD] Request body:', req.body);
   console.log('[UPLOAD] Request files:', req.files);
+  console.log('[UPLOAD] Request fileType:', req.fileType);
 
-  const type = req.query.type || req.body.type || 'misc';
+  const type = req.query.type || req.fileType || 'misc';
   const upload = createUpload(type);
 
   upload(req, res, function(err) {
@@ -247,10 +165,9 @@ exports.uploadMiddleware = (req, res, next) => {
       });
     } else if (err) {
       console.error('[UPLOAD] Upload error:', err);
-      
-      // Use the status code from the error if available
+
       const statusCode = err.statusCode || (err.message.includes('Invalid') ? 400 : 500);
-      
+
       if (err.message.includes('Invalid file type') || err.message.includes('Unsupported file type')) {
         const allowedTypes = type === 'video' || type === 'short' ? ['mp4', 'mov', 'avi'] :
           type === 'podcast' ? ['mp3', 'm4a', 'wav'] :
@@ -261,7 +178,7 @@ exports.uploadMiddleware = (req, res, next) => {
           allowedTypes: allowedTypes
         });
       }
-      
+
       return res.status(statusCode).json({
         success: false,
         error: err.message
@@ -303,89 +220,50 @@ exports.uploadFile = async (req, res) => {
       });
     }
 
-    // Get upload type and metadata from query or body
     const uploadType = req.query.type || req.body.type;
     const altText = req.body.alt || req.query.alt;
 
-    // Validate image aspect ratio only for image files (not videos)
-    // Skip validation for video files, audio files, and thumbnails
-    const fileExtension = path.extname(req.file.originalname).toLowerCase();
-    const isVideoFile = (req.file.mimetype && req.file.mimetype.startsWith('video/')) || 
-                       fileExtension.match(/\.(mp4|mov|avi|webm|mkv|m4v|flv|wmv|mpg|mpeg)$/);
-    const isAudioFile = (req.file.mimetype && req.file.mimetype.startsWith('audio/')) ||
-                       fileExtension.match(/\.(mp3|wav|ogg|m4a|aac|flac)$/);
-    const isThumbnail = req.file.originalname.includes('thumbnail');
-    
-    // Debug logging
-    console.log(`Upload file check - Name: ${req.file.originalname}, MIME: ${req.file.mimetype}, Extension: ${fileExtension}, isVideo: ${isVideoFile}`);
-    
-    if (req.file.mimetype && req.file.mimetype.startsWith('image/') && !isVideoFile && !isAudioFile && !isThumbnail) {
-      const isValidRatio = validateImageAspectRatio(req.file.path, uploadType, req.file.mimetype);
-      if (!isValidRatio) {
-        fsSync.unlinkSync(req.file.path);
-        let message;
-        switch (uploadType) {
-        case 'question':
-          message = 'Les questions nécessitent des images au format paysage (ratio 16:9)';
-          break;
-        case 'short':
-          message = 'Les shorts nécessitent des images au format portrait (ratio 9:16)';
-          break;
-        case 'article':
-        case 'video':
-        case 'podcast':
-          message = 'Les publications nécessitent des images au format carré (ratio 1:1)';
-          break;
-        default:
-          message = 'Ratio d\'aspect de l\'image invalide';
-        }
-        return res.status(400).json({
-          success: false,
-          message
-        });
+    const key = s3Service.generateKey(uploadType, req.file.originalname);
+
+    const uploadResult = await s3Service.uploadFile(
+      req.file.buffer,
+      key,
+      req.file.mimetype,
+      {
+        originalName: req.file.originalname,
+        uploadType: uploadType,
+        userId: req.user._id.toString(),
       }
-    }
+    );
 
-    // Store only the relative path
-    const relativePath = `/uploads/${uploadType}/${req.file.filename}`;
-
-    // Get file metadata
-    const fileStats = fsSync.statSync(req.file.path);
-    const fileSize = fileStats.size;
-    
     let metadata = {
-      url: relativePath,  // Store relative path, not full URL
-      size: fileSize,
-      format: path.extname(req.file.filename).substring(1),
-      filename: req.file.filename,
+      url: uploadResult.url,
+      key: uploadResult.key,
+      size: req.file.size,
+      format: path.extname(req.file.originalname).substring(1),
+      filename: req.file.originalname,
       originalName: req.file.originalname,
       alt: altText || ''
     };
 
-    // Add image-specific metadata (only for actual images, not videos or audio)
-    const isActualImage = req.file.mimetype && req.file.mimetype.startsWith('image/') && 
-                         !isVideoFile && !isAudioFile &&
-                         fileExtension.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg|tiff|ico)$/i);
-    
-    if (isActualImage) {
+    const isActualImage = req.file.mimetype && req.file.mimetype.startsWith('image/');
+
+    if (isActualImage && req.file.buffer) {
       try {
-        const dimensions = sizeOf(req.file.path);
+        const dimensions = sizeOf(req.file.buffer);
         metadata.width = dimensions.width;
         metadata.height = dimensions.height;
-        
-        // Generate URLs for different sizes (simulated - actual resizing would be done by CDN/image service)
-        const baseUrl = relativePath.substring(0, relativePath.lastIndexOf('.'));
-        const ext = path.extname(relativePath);
+
         metadata = {
           ...metadata,
-          original: relativePath,
-          thumbnail: `${baseUrl}_thumb${ext}`,
-          medium: `${baseUrl}_medium${ext}`,
-          large: `${baseUrl}_large${ext}`,
+          original: uploadResult.url,
+          thumbnail: uploadResult.url,
+          medium: uploadResult.url,
+          large: uploadResult.url,
           metadata: {
             width: dimensions.width,
             height: dimensions.height,
-            size: fileSize
+            size: req.file.size
           }
         };
       } catch (error) {
@@ -393,124 +271,48 @@ exports.uploadFile = async (req, res) => {
       }
     }
 
-    // Add video-specific metadata and process video
-    if (req.file.mimetype && req.file.mimetype.startsWith('video/')) {
-      try {
-        // Check if video needs conversion (MOV to MP4)
-        const needsConversion = req.file.originalname.toLowerCase().endsWith('.mov') || 
-                               req.file.mimetype === 'video/quicktime';
-        
-        let videoFilePath = req.file.path;
-        
-        // Convert MOV to MP4 if needed
-        if (needsConversion) {
-          const convertedPath = req.file.path.replace(/\.\w+$/, '_converted.mp4');
-          try {
-            await videoProcessor.convertToMP4(req.file.path, convertedPath);
-            // Delete original MOV file
-            await fs.unlink(req.file.path);
-            videoFilePath = convertedPath;
-            // Update file path for further processing
-            req.file.path = convertedPath;
-            req.file.filename = path.basename(convertedPath);
-          } catch (conversionError) {
-            console.error('[UPLOAD] Error converting MOV to MP4:', conversionError);
-            // Continue with original file if conversion fails
-          }
-        }
-        
-        // Process the video to get metadata and generate thumbnail
-        const processingResults = await videoProcessor.processUploadedVideo(videoFilePath, {
-          generateThumbnail: true,
-          compress: false, // Don't compress by default, can be enabled if needed
-          createPreview: false
-        });
-
-        // Use compressed version if available, otherwise use original
-
-        metadata = {
-          ...metadata,
-          videoUrl: relativePath,  // Use relative path
-          thumbnailUrl: processingResults.thumbnail ? 
-            processingResults.thumbnail.replace(process.cwd(), '') : '',
-          duration: processingResults.metadata?.duration || 0,
-          resolution: processingResults.metadata?.video ? 
-            `${processingResults.metadata.video.width}x${processingResults.metadata.video.height}` : '',
-          processingStatus: 'completed',
-          metadata: processingResults.metadata
-        };
-      } catch (videoError) {
-        console.error('[UPLOAD] Error processing video:', videoError);
-        // Fallback to basic metadata if video processing fails
-        metadata = {
-          ...metadata,
-          videoUrl: relativePath,
-          thumbnailUrl: '',
-          duration: 0,
-          resolution: '',
-          processingStatus: 'completed'
-        };
-      }
-    }
-
-    // Add audio-specific metadata
-    if (req.file.mimetype.startsWith('audio/')) {
-      metadata = {
-        ...metadata,
-        audioUrl: relativePath,  // Use relative path
-        duration: 0, // Would be extracted by audio processing service
-        bitrate: 0, // Would be extracted
-        waveform: [] // Would be generated
-      };
-    }
-
-    // Handle profile/cover photo updates
     if (uploadType === 'profile' || uploadType === 'cover') {
       const field = uploadType === 'profile' ? 'avatarUrl' : 'coverUrl';
       const user = await User.findById(req.user._id);
       if (user) {
         const oldUrl = user[field];
         if (oldUrl) {
-          // Extract the path from the URL (remove protocol and domain)
-          const urlPath = oldUrl.replace(/^https?:\/\/[^/]+/, '');
-          const oldPath = path.join(__dirname, '..', urlPath);
-          try {
-            if (fsSync.existsSync(oldPath)) {
-              fsSync.unlinkSync(oldPath);
-              console.log('[UPLOAD] Deleted old file:', oldPath);
+          const oldKey = s3Service.extractKeyFromUrl(oldUrl);
+          if (oldKey) {
+            try {
+              await s3Service.deleteFile(oldKey);
+              console.log('[UPLOAD] Deleted old file from S3:', oldKey);
+            } catch (error) {
+              console.error('[UPLOAD] Error deleting old file from S3:', error);
             }
-          } catch (error) {
-            console.error('[UPLOAD] Error deleting old file:', error);
           }
         }
       }
-      await User.findByIdAndUpdate(req.user._id, { [field]: relativePath });  // Store relative path
-      
-      // For profile/cover, return simplified response
+      await User.findByIdAndUpdate(req.user._id, { [field]: uploadResult.url });
+
       metadata = {
-        url: relativePath,  // Store relative path
-        publicId: req.file.filename,
+        url: uploadResult.url,
+        publicId: uploadResult.key,
         width: metadata.width || 0,
         height: metadata.height || 0,
         format: metadata.format,
-        size: fileSize
+        size: req.file.size
       };
     }
 
-    console.log('[UPLOAD] File uploaded successfully:', {
-      type: req.body.type,
-      filename: req.file.filename,
-      path: relativePath
+    console.log('[UPLOAD] File uploaded successfully to S3:', {
+      type: uploadType,
+      filename: req.file.originalname,
+      url: uploadResult.url
     });
 
-    // Return relative path - client will construct full URL as needed
     res.json({
       success: true,
       data: {
         ...metadata,
-        url: relativePath  // Return relative path
+        url: uploadResult.url
       },
-      url: relativePath // Keep for backward compatibility
+      url: uploadResult.url
     });
   } catch (error) {
     console.error('[UPLOAD] Upload error:', {
@@ -536,10 +338,9 @@ exports.uploadCoverPhoto = async (req, res) => {
   return exports.uploadFile(req, res);
 };
 
-// Batch upload handler
 exports.uploadBatch = async (req, res) => {
   console.log('[UPLOAD] Batch upload attempt');
-  
+
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({
       success: false,
@@ -553,45 +354,32 @@ exports.uploadBatch = async (req, res) => {
     failed: []
   };
 
-  // Process each file
   for (const file of req.files) {
     try {
-      // Validate aspect ratio only for actual image files (not videos)
-      const isImageFile = file.mimetype && file.mimetype.startsWith('image/');
-      const isVideoFile = file.mimetype && file.mimetype.startsWith('video/');
-      
-      if (isImageFile && !isVideoFile) {
-        const isValidRatio = validateImageAspectRatio(file.path, uploadType, file.mimetype);
-        if (!isValidRatio) {
-          fsSync.unlinkSync(file.path);
-          results.failed.push({
-            filename: file.originalname,
-            error: `Invalid aspect ratio for ${uploadType}`,
-            status: 'failed'
-          });
-          continue;
-        }
-      }
+      const key = s3Service.generateKey(uploadType, file.originalname);
 
-      // Store only relative path
-      const relativePath = `/uploads/${uploadType}/${file.filename}`;
-      // Generate full URL for response
-      const fileUrl = buildUrl(req, relativePath);
-      
-      // Get metadata
-      const fileStats = fsSync.statSync(file.path);
+      const uploadResult = await s3Service.uploadFile(
+        file.buffer,
+        key,
+        file.mimetype,
+        {
+          originalName: file.originalname,
+          uploadType: uploadType,
+          userId: req.user._id.toString(),
+        }
+      );
+
       let metadata = {
         filename: file.originalname,
-        url: fileUrl,
+        url: uploadResult.url,
         status: 'success',
-        size: fileStats.size,
-        format: path.extname(file.filename).substring(1)
+        size: file.size,
+        format: path.extname(file.originalname).substring(1)
       };
 
-      // Add image dimensions if applicable
       if (file.mimetype.startsWith('image/')) {
         try {
-          const dimensions = sizeOf(file.path);
+          const dimensions = sizeOf(file.buffer);
           metadata.width = dimensions.width;
           metadata.height = dimensions.height;
         } catch (error) {
@@ -607,19 +395,10 @@ exports.uploadBatch = async (req, res) => {
         error: error.message,
         status: 'failed'
       });
-      
-      // Clean up failed file
-      try {
-        if (fsSync.existsSync(file.path)) {
-          fsSync.unlinkSync(file.path);
-        }
-      } catch (cleanupError) {
-        console.error('[UPLOAD] Error cleaning up failed file:', cleanupError);
-      }
     }
   }
 
-  const _response = {
+  const response = {
     success: true,
     data: {
       uploaded: results.uploaded,
@@ -636,36 +415,17 @@ exports.uploadBatch = async (req, res) => {
   res.json(response);
 };
 
-// Create batch upload middleware
-const batchStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const type = req.query.type || req.body.type || 'gallery';
-    const dir = path.resolve(process.cwd(), `uploads/${type}`);
-    
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const extension = path.extname(file.originalname);
-    cb(null, uniqueSuffix + extension);
-  }
-});
-
 const batchUpload = multer({
-  storage: batchStorage,
+  storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB per file for batch uploads
+    fileSize: 10 * 1024 * 1024
   }
-}).array('files[]', 20); // Max 20 files at once
+}).array('files[]', 20);
 
 exports.batchUploadMiddleware = (req, res, next) => {
   console.log('[UPLOAD] Starting batch upload middleware');
-  
+
   batchUpload(req, res, function(err) {
     if (err instanceof multer.MulterError) {
       console.error('[UPLOAD] Batch multer error:', err);

@@ -121,7 +121,7 @@ exports.markAllAsRead = async (req, res) => {
 // Supprimer une notification
 exports.deleteNotification = async (req, res) => {
   try {
-    const _result = await Notification.findOneAndDelete({
+    const result = await Notification.findOneAndDelete({
       _id: req.params.notificationId,
       recipient: req.userId
     });

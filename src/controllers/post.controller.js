@@ -512,14 +512,7 @@ exports.getPosts = async (req, res) => {
           try {
             const journalist = await User.findById(post.journalist);
             if (journalist) {
-              postObj.journalist = {
-                id: journalist._id,
-                name: journalist.name,
-                avatarUrl: journalist.avatarUrl && journalist.avatarUrl.trim() ? buildMediaUrl(req, journalist.avatarUrl) : null,
-                isVerified: journalist.isVerified || false,
-                organization: journalist.organization || '',
-                specialties: journalist.specialties || []
-              };
+              postObj.journalist = formatUser(journalist, req, req.user);
             } else {
               postObj.journalist = {
                 id: post.journalist,
@@ -532,8 +525,11 @@ exports.getPosts = async (req, res) => {
             }
           } catch (err) {
             console.error('Error finding journalist:', err);
-            postObj.journalist = formatUser(null, req);
+            postObj.journalist = formatUser(null, req, req.user);
           }
+        } else {
+          // Ensure existing journalist object has isFollowing calculated
+          postObj.journalist = formatUser(postObj.journalist, req, req.user);
         }
 
         // Keep URLs as relative paths
@@ -573,6 +569,211 @@ exports.getPosts = async (req, res) => {
   }
 };
 
+exports.searchPosts = async (req, res) => {
+  console.log('[POST] Search posts request:', {
+    query: req.query,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    const {
+      search,
+      query: searchQuery,
+      page = 1,
+      limit = 20,
+      type,
+      domain,
+      politicalOrientation,
+      politicalView,
+      includeRelevance
+    } = req.query;
+
+    const searchTerm = search || searchQuery;
+
+    if (!searchTerm || searchTerm.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Search query is required'
+      });
+    }
+
+    const queryFilter = {
+      isDeleted: { $ne: true },
+      status: 'published',
+      $or: [
+        { title: { $regex: searchTerm, $options: 'i' } },
+        { content: { $regex: searchTerm, $options: 'i' } }
+      ]
+    };
+
+    if (type) {
+      if (type === 'short') {
+        queryFilter.type = 'short';
+      } else if (type === 'video') {
+        queryFilter.type = 'video';
+      } else if (type === 'posts') {
+        queryFilter.type = { $ne: 'short' };
+      } else {
+        queryFilter.type = type;
+      }
+    }
+
+    if (domain) {
+      queryFilter.domain = domain;
+    }
+
+    const politicalFilter = politicalOrientation || politicalView;
+    let politicalViewFilter = null;
+    if (politicalFilter && politicalFilter !== 'all') {
+      politicalViewFilter = politicalFilter;
+    }
+
+    const bannedUsers = await User.find({ status: 'banned' }).select('_id');
+    const bannedUserIds = bannedUsers.map(u => u._id);
+
+    if (bannedUserIds.length > 0) {
+      queryFilter.journalist = { $nin: bannedUserIds };
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    let posts = await Post.find(queryFilter)
+      .populate({
+        path: 'journalist',
+        select: 'name username avatarUrl specialties isVerified organization journalistRole status',
+        model: User,
+        transform: (doc) => {
+          if (!doc) {
+            return {
+              id: null,
+              name: 'Journaliste inconnu',
+              avatarUrl: null,
+              isVerified: false,
+              organization: '',
+              specialties: []
+            };
+          }
+          const obj = doc.toObject();
+          const builtUrl = obj.avatarUrl && obj.avatarUrl.trim() ? buildMediaUrl(req, obj.avatarUrl) : null;
+          return {
+            id: obj._id.toString(),
+            name: obj.name || obj.username || 'Journaliste inconnu',
+            avatarUrl: builtUrl,
+            isVerified: obj.isVerified || false,
+            organization: obj.organization,
+            specialties: obj.specialties || []
+          };
+        }
+      })
+      .populate({
+        path: 'opposingPosts.post',
+        select: 'title journalist',
+        populate: {
+          path: 'journalist',
+          select: 'name avatarUrl isVerified'
+        }
+      })
+      .sort({ 'stats.views': -1, createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    if (politicalViewFilter) {
+      posts = posts.filter(post => {
+        const dominantView = post.politicalOrientation?.dominantView;
+        return dominantView && dominantView.toLowerCase() === politicalViewFilter.toLowerCase();
+      });
+    }
+
+    const total = await Post.countDocuments(queryFilter);
+
+    const formattedPosts = posts.map(post => {
+      const postObj = {
+        id: post._id.toString(),
+        title: post.title,
+        content: post.content,
+        type: post.type,
+        domain: post.domain,
+        status: post.status,
+        journalist: post.journalist,
+        videoUrl: post.videoUrl ? buildMediaUrl(req, post.videoUrl) : null,
+        audioUrl: post.audioUrl ? buildMediaUrl(req, post.audioUrl) : null,
+        imageUrl: post.imageUrl ? buildMediaUrl(req, post.imageUrl) : null,
+        thumbnailUrl: post.thumbnailUrl ? buildMediaUrl(req, post.thumbnailUrl) : null,
+        stats: post.stats || { views: 0, shares: 0, engagement: 0 },
+        interactions: {
+          likes: post.interactions?.likes?.count || 0,
+          dislikes: post.interactions?.dislikes?.count || 0,
+          saves: post.interactions?.saves?.count || 0,
+          comments: post.interactions?.comments?.count || 0,
+          shares: post.stats?.shares || 0
+        },
+        politicalOrientation: post.politicalOrientation,
+        opposingPosts: post.opposingPosts || [],
+        createdAt: post.createdAt,
+        updatedAt: post.updatedAt
+      };
+
+      if (post.type === 'question' && post.metadata?.question) {
+        postObj.question = {
+          options: post.metadata.question.options || [],
+          totalVotes: post.metadata.question.totalVotes || 0,
+          voters: post.metadata.question.voters || []
+        };
+      }
+
+      if (req.user) {
+        postObj.hasLiked = post.interactions?.likes?.users?.some(
+          id => id.toString() === req.user._id.toString()
+        ) || false;
+        postObj.hasDisliked = post.interactions?.dislikes?.users?.some(
+          id => id.toString() === req.user._id.toString()
+        ) || false;
+        postObj.hasSaved = post.interactions?.saves?.users?.some(
+          id => id.toString() === req.user._id.toString()
+        ) || false;
+      }
+
+      if (includeRelevance === 'true') {
+        const titleMatch = post.title.toLowerCase().includes(searchTerm.toLowerCase());
+        const contentMatch = post.content?.toLowerCase().includes(searchTerm.toLowerCase());
+        postObj.relevanceScore = (titleMatch ? 2 : 0) + (contentMatch ? 1 : 0);
+      }
+
+      return postObj;
+    });
+
+    console.log('[POST] Search complete:', {
+      query: searchTerm,
+      found: formattedPosts.length,
+      total,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      data: {
+        posts: formattedPosts,
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('[POST] Search error:', {
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+
+    res.status(400).json({
+      success: false,
+      message: 'Failed to search posts',
+      error: error.message
+    });
+  }
+};
+
 exports.getPost = async (req, res) => {
   console.log('[POST] Get post request:', {
     postId: req.params.id,
@@ -581,6 +782,15 @@ exports.getPost = async (req, res) => {
   });
 
   try {
+    // Validate MongoDB ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      console.log('[POST] Invalid ObjectId format:', req.params.id);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid post ID format'
+      });
+    }
+
     const post = await Post.findById(req.params.id)
       .where({ isDeleted: { $ne: true } })
       .populate({
@@ -714,12 +924,17 @@ exports.getPost = async (req, res) => {
   } catch (error) {
     console.error('[POST] Get post error:', {
       postId: req.params.id,
+      userId: req.user?._id,
+      userRole: req.user?.role,
       error: error.message,
       stack: error.stack,
       timestamp: new Date().toISOString()
     });
 
-    res.status(400).json({
+    // Return 404 if post not found, 400 for other errors
+    const status = error.message?.includes('not found') || error.name === 'CastError' ? 404 : 400;
+
+    res.status(status).json({
       success: false,
       message: 'Failed to fetch post',
       error: error.message

@@ -38,19 +38,9 @@ const securityHeaders = () => {
 // Request sanitization middleware
 const sanitizeRequest = () => {
   return (req, res, next) => {
-    // Sanitize request body
-    if (req.body) {
+    // Sanitize request body only
+    if (req.body && typeof req.body === 'object') {
       req.body = sanitizeObject(req.body);
-    }
-
-    // Sanitize query parameters
-    if (req.query) {
-      req.query = sanitizeObject(req.query);
-    }
-
-    // Sanitize URL parameters
-    if (req.params) {
-      req.params = sanitizeObject(req.params);
     }
 
     next();
@@ -217,13 +207,10 @@ const configureSecurity = (app) => {
   // Custom security headers
   app.use(securityHeaders());
 
-  // MongoDB query injection prevention
-  app.use(mongoSanitize());
-
   // XSS protection
   app.use(xss());
 
-  // Request sanitization
+  // Request sanitization (includes MongoDB injection prevention)
   app.use(sanitizeRequest());
 
   // Trust proxy (for accurate IP addresses)

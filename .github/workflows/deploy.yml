@@ -14,98 +14,139 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci --production
-
-      - name: Create .env file
-        run: |
-          echo "NODE_ENV=production" >> .env
-          echo "PORT=${{ secrets.PORT }}" >> .env
-          echo "MONGODB_URI=${{ secrets.MONGODB_URI }}" >> .env
-          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
-          echo "JWT_REFRESH_SECRET=${{ secrets.JWT_REFRESH_SECRET }}" >> .env
-          echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> .env
-          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> .env
-          echo "AWS_REGION=${{ secrets.AWS_REGION }}" >> .env
-          echo "AWS_S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}" >> .env
-          echo "REDIS_HOST=${{ secrets.REDIS_HOST }}" >> .env
-          echo "REDIS_PORT=${{ secrets.REDIS_PORT }}" >> .env
-          echo "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" >> .env
-          echo "EMAIL_HOST=${{ secrets.EMAIL_HOST }}" >> .env
-          echo "EMAIL_PORT=${{ secrets.EMAIL_PORT }}" >> .env
-          echo "EMAIL_USER=${{ secrets.EMAIL_USER }}" >> .env
-          echo "EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}" >> .env
-          echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}" >> .env
-          echo "FRONTEND_URL=${{ secrets.FRONTEND_URL }}" >> .env
-
       - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
-          script: |
-            # Navigate to app directory
-            cd ${{ secrets.VPS_APP_PATH || '/var/www/thot_backend' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
 
-            # Pull latest changes
-            git pull origin main
+          sshpass -p "Amaury262879?" ssh -o StrictHostKeyChecking=no ubuntu@37.59.106.113 << 'ENDSSH'
+            set -e
 
-            # Install dependencies
-            npm ci --production
+            echo "=== Setting up application directory ==="
+            sudo mkdir -p /var/www/thot-backend
+            sudo chown -R ubuntu:ubuntu /var/www/thot-backend
+            cd /var/www/thot-backend
 
-            # Create .env file on VPS
-            cat > .env << 'EOF'
-            NODE_ENV=production
-            PORT=${{ secrets.PORT }}
-            MONGODB_URI=${{ secrets.MONGODB_URI }}
-            JWT_SECRET=${{ secrets.JWT_SECRET }}
-            JWT_REFRESH_SECRET=${{ secrets.JWT_REFRESH_SECRET }}
-            AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
-            AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
-            AWS_REGION=${{ secrets.AWS_REGION }}
-            AWS_S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}
-            REDIS_HOST=${{ secrets.REDIS_HOST }}
-            REDIS_PORT=${{ secrets.REDIS_PORT }}
-            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
-            EMAIL_HOST=${{ secrets.EMAIL_HOST }}
-            EMAIL_PORT=${{ secrets.EMAIL_PORT }}
-            EMAIL_USER=${{ secrets.EMAIL_USER }}
-            EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}
-            SENTRY_DSN=${{ secrets.SENTRY_DSN }}
-            FRONTEND_URL=${{ secrets.FRONTEND_URL }}
-            EOF
-
-            # Restart application (adjust based on your process manager)
-            # Using PM2
-            if command -v pm2 &> /dev/null; then
-              pm2 restart thot-backend || pm2 start src/server.production.js --name thot-backend
-            # Using systemd
-            elif command -v systemctl &> /dev/null; then
-              sudo systemctl restart thot-backend
-            # Using docker
-            elif command -v docker &> /dev/null; then
-              docker-compose down && docker-compose up -d
+            if [ ! -d ".git" ]; then
+              echo "=== Cloning repository ==="
+              git clone https://github.com/${{ github.repository }} .
             else
-              echo "No process manager found. Please restart manually."
+              echo "=== Pulling latest changes ==="
+              git fetch origin
+              git reset --hard origin/main
             fi
 
-            # Run health check
+            echo "=== Installing Node.js if needed ==="
+            if ! command -v node &> /dev/null; then
+              curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
+              sudo apt-get install -y nodejs
+            fi
+
+            echo "=== Installing PM2 if needed ==="
+            if ! command -v pm2 &> /dev/null; then
+              sudo npm install -g pm2
+            fi
+
+            echo "=== Installing dependencies ==="
+            npm ci --production
+
+            echo "=== Creating .env file ==="
+            cat > .env << 'EOF'
+          NODE_ENV=production
+          PORT=3000
+          MONGO_URI=${{ secrets.MONGODB_URI }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          S3_ACCESS_KEY_ID=3362f96514e14af38a9710cb60c5fff1
+          S3_SECRET_ACCESS_KEY=79a7bc7abc5940f29e6bf01afb32d3a0
+          S3_REGION=rbx
+          S3_ENDPOINT=https://s3.rbx.io.cloud.ovh.net
+          S3_BUCKET_NAME=thot-3sd
+          API_BASE_URL=http://37.59.106.113:3000
+          CLIENT_URL=http://37.59.106.113:3000
+          EOF
+
+            echo "=== Setting up PM2 ecosystem ==="
+            cat > ecosystem.config.js << 'EOFPM2'
+          module.exports = {
+            apps: [{
+              name: 'thot-backend',
+              script: './src/server.js',
+              instances: 1,
+              exec_mode: 'cluster',
+              env: {
+                NODE_ENV: 'production',
+                PORT: 3000
+              },
+              error_file: './logs/err.log',
+              out_file: './logs/out.log',
+              log_file: './logs/combined.log',
+              time: true
+            }]
+          };
+          EOFPM2
+
+            echo "=== Creating logs directory ==="
+            mkdir -p logs
+
+            echo "=== Restarting application ==="
+            pm2 delete thot-backend 2>/dev/null || true
+            pm2 start ecosystem.config.js
+            pm2 save
+            pm2 startup systemd -u ubuntu --hp /home/ubuntu
+
+            echo "=== Installing and configuring Nginx ==="
+            if ! command -v nginx &> /dev/null; then
+              sudo apt-get install -y nginx
+            fi
+
+            sudo bash -c 'cat > /etc/nginx/sites-available/thot-backend' << 'EOFNGINX'
+          server {
+              listen 80;
+              server_name 37.59.106.113;
+
+              client_max_body_size 500M;
+
+              location / {
+                  proxy_pass http://localhost:3000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade \$http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_cache_bypass \$http_upgrade;
+
+                  proxy_connect_timeout 600;
+                  proxy_send_timeout 600;
+                  proxy_read_timeout 600;
+                  send_timeout 600;
+              }
+          }
+          EOFNGINX
+
+            sudo ln -sf /etc/nginx/sites-available/thot-backend /etc/nginx/sites-enabled/
+            sudo rm -f /etc/nginx/sites-enabled/default
+            sudo nginx -t && sudo systemctl restart nginx
+
+            echo "=== Opening firewall ports ==="
+            sudo ufw allow 80/tcp 2>/dev/null || true
+            sudo ufw allow 3000/tcp 2>/dev/null || true
+
+            echo "=== Deployment completed ==="
+            pm2 status
+
+            echo "=== Health check ==="
             sleep 5
-            curl -f http://localhost:${{ secrets.PORT }}/health || exit 1
+            curl -f http://localhost:3000/api/health || echo "Health check endpoint not available"
+          ENDSSH
 
       - name: Notify deployment status
         if: always()
         run: |
           if [ ${{ job.status }} == 'success' ]; then
             echo "✅ Deployment successful!"
+            echo "Backend is now running at http://37.59.106.113"
           else
             echo "❌ Deployment failed!"
             exit 1

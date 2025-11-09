@@ -13,6 +13,10 @@ package-lock.json
 .env.production
 .env*.local
 
+# Deployment
+deployment.log
+deploy-*.sh
+
 # Logs
 logs/
 *.log

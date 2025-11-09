@@ -8,7 +8,7 @@ const { limiters } = require('../middleware/rateLimiter.middleware');
 // Public routes - filter by type='short'
 router.get('/',
   async (req, res, next) => {
-    req.query.type = 'short'; // Force filter by short type
+    req.query.type = 'short';
     next();
   },
   postController.getPosts
