@@ -41,7 +41,7 @@ exports.addFormation = async (req, res) => {
 
     await user.save();
 
-    const profile = user.getPublicProfile();
+    const profile = user.getPublicProfile(req.user);
     profile.avatarUrl = buildMediaUrl(req, profile.avatarUrl, '/assets/images/defaults/default_journalist_avatar.png');
     profile.coverUrl = buildMediaUrl(req, profile.coverUrl);
 
@@ -88,7 +88,7 @@ exports.updateFormation = async (req, res) => {
 
     await user.save();
 
-    const profile = user.getPublicProfile();
+    const profile = user.getPublicProfile(req.user);
     profile.avatarUrl = buildMediaUrl(req, profile.avatarUrl);
     profile.coverUrl = buildMediaUrl(req, profile.coverUrl);
 
@@ -123,7 +123,7 @@ exports.deleteFormation = async (req, res) => {
 
     res.json({
       success: true,
-      data: user.getPublicProfile()
+      data: user.getPublicProfile(req.user)
     });
   } catch (error) {
     res.status(400).json({

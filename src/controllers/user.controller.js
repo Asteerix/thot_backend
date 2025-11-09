@@ -758,7 +758,7 @@ exports.getProfile = async (req, res) => {
       });
     }
 
-    const profileData = user.getPublicProfile();
+    const profileData = user.getPublicProfile(req.user);
 
     res.json({
       success: true,

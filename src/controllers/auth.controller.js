@@ -198,7 +198,7 @@ exports.register = async (req, res) => {
       timestamp: new Date().toISOString()
     });
 
-    const profileData = user.getPublicProfile();
+    const profileData = user.getPublicProfile(user);
     console.log('[AUTH] User profile data:', profileData);
 
     res.status(201).json({
@@ -333,7 +333,7 @@ exports.login = async (req, res) => {
       timestamp: new Date().toISOString()
     });
 
-    const profileData = user.getPublicProfile();
+    const profileData = user.getPublicProfile(user);
     console.log('[AUTH] Login profile data:', profileData);
 
     res.json({
