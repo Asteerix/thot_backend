@@ -394,31 +394,6 @@ exports.votePoliticalOrientation = async (req, res) => {
     // Invalidate cache after political vote
     clearCache('posts');
 
-    // Remove all opposition relationships after political vote
-    if (updatedPost.opposingPosts && updatedPost.opposingPosts.length > 0) {
-      // Remove this post from opposedByPosts of all posts it opposes
-      await Post.updateMany(
-        { _id: { $in: updatedPost.opposingPosts.map(op => op.postId) } },
-        { $pull: { opposedByPosts: { postId: updatedPost._id } } }
-      );
-      console.log('[POLITICAL_VOTE] Removed from opposedByPosts of opposing posts');
-    }
-
-    if (updatedPost.opposedByPosts && updatedPost.opposedByPosts.length > 0) {
-      // Remove this post from opposingPosts of all posts that oppose it
-      await Post.updateMany(
-        { _id: { $in: updatedPost.opposedByPosts.map(op => op.postId) } },
-        { $pull: { opposingPosts: { postId: updatedPost._id } } }
-      );
-      console.log('[POLITICAL_VOTE] Removed from opposingPosts of posts that oppose this');
-    }
-
-    // Clear opposition arrays on this post
-    updatedPost.opposingPosts = [];
-    updatedPost.opposedByPosts = [];
-    await updatedPost.save();
-    console.log('[POLITICAL_VOTE] Cleared all opposition relationships for post:', postId);
-
     // Calculate dominant view
     let maxVotes = 0;
     let dominantView = 'neutral';
