@@ -42,6 +42,18 @@ router.get('/follow-status/:journalistId', userController.getFollowStatus);
 // Get user's statistics
 router.get('/stats', userController.getStats);
 
+// Update journalist card
+router.put('/journalist-card', userController.updateJournalistCard);
+
+// Delete journalist card
+router.delete('/journalist-card', userController.deleteJournalistCard);
+
+// Get user followers
+router.get('/:id/followers', userController.getFollowers);
+
+// Get user following
+router.get('/:id/following', userController.getFollowing);
+
 // Update user profile
 router.put('/:id', userController.updateProfile);
 

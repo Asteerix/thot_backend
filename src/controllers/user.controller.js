@@ -773,6 +773,205 @@ exports.getProfile = async (req, res) => {
   }
 };
 
+exports.updateJournalistCard = async (req, res) => {
+  try {
+    const { pressCard } = req.body;
+
+    if (!pressCard || typeof pressCard !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Le numéro de carte de presse est requis'
+      });
+    }
+
+    if (!/^\d{4,}$/.test(pressCard)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le numéro de carte de presse doit contenir au moins 4 chiffres'
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Utilisateur non trouvé'
+      });
+    }
+
+    if (user.role !== 'journalist') {
+      return res.status(403).json({
+        success: false,
+        message: 'Seuls les journalistes peuvent ajouter une carte de presse'
+      });
+    }
+
+    user.pressCard = pressCard;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Carte de presse mise à jour avec succès',
+      data: {
+        pressCard: user.pressCard
+      }
+    });
+  } catch (error) {
+    console.error('[USER] Error updating journalist card:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la mise à jour de la carte de presse',
+      error: error.message
+    });
+  }
+};
+
+exports.deleteJournalistCard = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Utilisateur non trouvé'
+      });
+    }
+
+    if (user.role !== 'journalist') {
+      return res.status(403).json({
+        success: false,
+        message: 'Seuls les journalistes peuvent supprimer une carte de presse'
+      });
+    }
+
+    user.pressCard = null;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Carte de presse supprimée avec succès'
+    });
+  } catch (error) {
+    console.error('[USER] Error deleting journalist card:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la suppression de la carte de presse',
+      error: error.message
+    });
+  }
+};
+
+exports.getFollowers = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    const user = await User.findById(id)
+      .populate({
+        path: 'followers',
+        select: 'name username avatarUrl organization isVerified role followersCount followingCount',
+        options: {
+          skip: (page - 1) * parseInt(limit),
+          limit: parseInt(limit)
+        }
+      });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Utilisateur non trouvé'
+      });
+    }
+
+    const total = user.followers?.length || 0;
+    const followers = (user.followers || []).map(follower => ({
+      id: follower._id.toString(),
+      name: follower.name,
+      username: follower.username,
+      avatarUrl: follower.avatarUrl,
+      organization: follower.organization,
+      isVerified: follower.isVerified,
+      type: follower.role === 'journalist' ? 'journalist' : 'regular',
+      followersCount: follower.followersCount || 0,
+      followingCount: follower.followingCount || 0
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        followers,
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('[USER] Error getting followers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des abonnés',
+      error: error.message
+    });
+  }
+};
+
+exports.getFollowing = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    const user = await User.findById(id)
+      .populate({
+        path: 'followedJournalists',
+        select: 'name username avatarUrl organization isVerified role followersCount followingCount specialties',
+        options: {
+          skip: (page - 1) * parseInt(limit),
+          limit: parseInt(limit)
+        }
+      });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Utilisateur non trouvé'
+      });
+    }
+
+    const following = (user.followedJournalists || []).map(journalist => ({
+      id: journalist._id.toString(),
+      name: journalist.name,
+      username: journalist.username,
+      avatarUrl: journalist.avatarUrl,
+      organization: journalist.organization,
+      isVerified: journalist.isVerified,
+      type: 'journalist',
+      followersCount: journalist.followersCount || 0,
+      followingCount: journalist.followingCount || 0,
+      specialties: journalist.specialties || []
+    }));
+
+    const total = following.length;
+
+    res.json({
+      success: true,
+      data: {
+        following,
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('[USER] Error getting following:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des abonnements',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   getSavedPosts: exports.getSavedPosts,
   getSavedShorts: exports.getSavedShorts,
@@ -786,5 +985,9 @@ module.exports = {
   getFollowStatus: exports.getFollowStatus,
   getStats: exports.getStats,
   updateProfile: exports.updateProfile,
-  getProfile: exports.getProfile
+  getProfile: exports.getProfile,
+  updateJournalistCard: exports.updateJournalistCard,
+  deleteJournalistCard: exports.deleteJournalistCard,
+  getFollowers: exports.getFollowers,
+  getFollowing: exports.getFollowing
 };

@@ -109,7 +109,7 @@ exports.createPost = async (req, res) => {
     const populatedPost = await Post.findById(savedPost._id).populate({
       path: 'journalist',
       select:
-        'name username avatarUrl specialties isVerified organization journalistRole',
+        '_id name username avatarUrl specialties isVerified organization journalistRole followers',
       transform: (doc) => {
         if (!doc) {
           return {
@@ -329,7 +329,7 @@ exports.getPosts = async (req, res) => {
       .populate({
         path: 'journalist',
         select:
-          'name username avatarUrl specialties isVerified organization journalistRole status',
+          '_id name username avatarUrl specialties isVerified organization journalistRole status followers',
         model: User,
         transform: (doc) => {
           if (!doc) {
@@ -422,7 +422,7 @@ exports.getPosts = async (req, res) => {
         .populate({
           path: 'journalist',
           select:
-            'name username avatarUrl specialties isVerified organization journalistRole status',
+            '_id name username avatarUrl specialties isVerified organization journalistRole status followers',
           model: User,
           transform: (doc) => {
             if (!doc) {
@@ -640,7 +640,7 @@ exports.searchPosts = async (req, res) => {
     let posts = await Post.find(queryFilter)
       .populate({
         path: 'journalist',
-        select: 'name username avatarUrl specialties isVerified organization journalistRole status',
+        select: '_id name username avatarUrl specialties isVerified organization journalistRole status followers',
         model: User,
         transform: (doc) => {
           if (!doc) {
@@ -670,7 +670,7 @@ exports.searchPosts = async (req, res) => {
         select: 'title journalist',
         populate: {
           path: 'journalist',
-          select: 'name avatarUrl isVerified'
+          select: '_id name avatarUrl isVerified username followers'
         }
       })
       .sort({ 'stats.views': -1, createdAt: -1 })
@@ -914,8 +914,31 @@ exports.getPost = async (req, res) => {
       postObj.imageUrl = '/uploads/default-post-image.png';
     }
     // videoUrl and thumbnailUrl remain as is (relative paths)
-    
+
     // journalist.avatarUrl remains as is (relative path)
+
+    // Format opposition posts
+    if (postObj.opposingPosts && Array.isArray(postObj.opposingPosts)) {
+      postObj.opposingPosts = postObj.opposingPosts
+        .filter(op => op.postId != null)
+        .map(op => ({
+          postId: op.postId._id?.toString() || op.postId.toString(),
+          title: op.postId.title || '',
+          imageUrl: op.postId.imageUrl || '',
+          description: op.description || ''
+        }));
+    }
+
+    if (postObj.opposedByPosts && Array.isArray(postObj.opposedByPosts)) {
+      postObj.opposedByPosts = postObj.opposedByPosts
+        .filter(op => op.postId != null)
+        .map(op => ({
+          postId: op.postId._id?.toString() || op.postId.toString(),
+          title: op.postId.title || '',
+          imageUrl: op.postId.imageUrl || '',
+          description: op.description || ''
+        }));
+    }
 
     res.json({
       success: true,
@@ -1647,7 +1670,7 @@ exports.interactWithPost = async (req, res) => {
       await verifyPost.populate({
         path: 'journalist',
         select:
-          'name username avatarUrl specialties isVerified organization journalistRole',
+          '_id name username avatarUrl specialties isVerified organization journalistRole followers',
         transform: (doc) => {
           if (!doc) {
             return {
@@ -1708,7 +1731,7 @@ exports.interactWithPost = async (req, res) => {
       const updatedPost = await Post.findById(post._id).populate({
         path: 'journalist',
         select:
-          'name username avatarUrl specialties isVerified organization journalistRole',
+          '_id name username avatarUrl specialties isVerified organization journalistRole followers',
         transform: (doc) => {
           if (!doc) {
             return {
@@ -2020,7 +2043,7 @@ exports.getPostOppositions = async (req, res) => {
         match: { isDeleted: { $ne: true } },
         populate: {
           path: 'journalist',
-          select: 'name avatarUrl username isVerified',
+          select: '_id name avatarUrl username isVerified followers',
           model: 'User'
         }
       })
@@ -2031,7 +2054,7 @@ exports.getPostOppositions = async (req, res) => {
         match: { isDeleted: { $ne: true } },
         populate: {
           path: 'journalist',
-          select: 'name avatarUrl username isVerified',
+          select: '_id name avatarUrl username isVerified followers',
           model: 'User'
         }
       });
