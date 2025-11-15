@@ -27,7 +27,8 @@ const formatUser = (user, req, currentUser = null) => {
 
   // Build flat stats structure for mobile compatibility
   const formattedUser = {
-    id: userObj._id,
+    _id: userObj._id, // Keep _id for Flutter compatibility
+    id: userObj._id?.toString() || userObj.id, // Ensure id is a string
     username: userObj.username || userObj.name,
     name: userObj.name || userObj.username,
     email: userObj.email,

@@ -766,15 +766,8 @@ router.get('/:id/followers', auth, async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
 
     const user = await User.findOne({ _id: req.params.id, role: 'journalist' })
-      .populate({
-        path: 'followers',
-        select: 'name username avatarUrl organization isVerified role',
-        options: {
-          skip: (page - 1) * limit,
-          limit: parseInt(limit),
-          sort: { createdAt: -1 }
-        }
-      });
+      .populate('followers', 'name username avatarUrl organization isVerified role')
+      .lean();
 
     if (!user) {
       return res.status(404).json({
@@ -783,8 +776,13 @@ router.get('/:id/followers', auth, async (req, res) => {
       });
     }
 
-    const total = user.followers ? user.followers.length : 0;
-    const followers = user.followers ? user.followers.map(follower => ({
+    const allFollowers = user.followers || [];
+    const total = allFollowers.length;
+
+    const startIndex = (parseInt(page) - 1) * parseInt(limit);
+    const paginatedFollowers = allFollowers.slice(startIndex, startIndex + parseInt(limit));
+
+    const followers = paginatedFollowers.map(follower => ({
       id: follower._id,
       name: follower.name,
       username: follower.username,
@@ -792,7 +790,7 @@ router.get('/:id/followers', auth, async (req, res) => {
       organization: follower.organization,
       isVerified: follower.isVerified,
       isJournalist: follower.role === 'journalist'
-    })) : [];
+    }));
 
     res.json({
       success: true,
@@ -800,7 +798,7 @@ router.get('/:id/followers', auth, async (req, res) => {
         followers,
         total,
         page: parseInt(page),
-        pages: Math.ceil(total / limit)
+        pages: Math.ceil(total / parseInt(limit))
       }
     });
   } catch (error) {
@@ -1146,7 +1144,7 @@ router.post('/:id/questions/:questionId/answer', auth, requireJournalist, async 
 
     await question.save();
     await question.populate('author', 'username name avatarUrl');
-    await question.populate('journalist', 'name username avatarUrl');
+    await question.populate('journalist', '_id name username avatarUrl');
 
     res.json({
       success: true,

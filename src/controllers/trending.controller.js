@@ -278,7 +278,7 @@ exports.searchTrending = async (req, res) => {
         title: { $regex: searchQuery, $options: 'i' },
         isDeleted: { $ne: true }
       })
-        .populate('journalist', 'name avatarUrl isVerified')
+        .populate('journalist', '_id name avatarUrl isVerified')
         .select('title type imageUrl createdAt stats')
         .sort('-createdAt')
         .limit(10);

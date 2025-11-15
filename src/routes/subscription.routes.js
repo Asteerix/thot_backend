@@ -51,7 +51,7 @@ router.get('/posts', auth, async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
-      .populate('journalist', 'name username avatarUrl specialties isVerified organization journalistRole')
+      .populate('journalist', '_id name username avatarUrl specialties isVerified organization journalistRole')
       .lean();
 
     // Get total count for pagination

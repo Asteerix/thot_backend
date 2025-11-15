@@ -218,7 +218,7 @@ const postSchema = new mongoose.Schema(
     imageUrl: {
       type: String,
       required: function () {
-        return this.type !== 'video' && this.type !== 'short';
+        return this.type !== 'video' && this.type !== 'short' && this.type !== 'podcast';
       },
       validate: {
         validator: function (_value) {

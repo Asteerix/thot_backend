@@ -48,7 +48,7 @@ exports.createPost = async (req, res) => {
     }
 
     // Extract opposition data if provided
-    const { opposingPostId, oppositionReason, opposingPosts, ...postData } = req.body;
+    const { opposingPostId, oppositionReason, ...postData } = req.body;
 
     const post = new Post({
       ...postData,
@@ -62,14 +62,6 @@ exports.createPost = async (req, res) => {
 
     const savedPost = await post.save();
 
-    console.log('[POST] Post created:', {
-      postId: savedPost._id,
-      title: savedPost.title,
-      hasOpposingPostId: !!opposingPostId,
-      hasOpposingPosts: !!opposingPosts,
-      opposingPosts: opposingPosts
-    });
-
     // Notify followers about new post
     const journalist = await User.findById(req.user._id);
     if (journalist && journalist.followers && journalist.followers.length > 0) {
@@ -80,99 +72,67 @@ exports.createPost = async (req, res) => {
       );
     }
 
-    // Handle oppositions - support both single and multiple
-    const opposingPostsArray = opposingPosts && Array.isArray(opposingPosts) && opposingPosts.length > 0
-      ? opposingPosts
-      : opposingPostId
-        ? [{ postId: opposingPostId, description: oppositionReason || '' }]
-        : [];
-
-    if (opposingPostsArray.length > 0) {
-      console.log('[POST] Creating opposition relationships:', {
-        newPostId: savedPost._id,
-        opposingPostsCount: opposingPostsArray.length
+    // Handle opposition if opposingPostId is provided
+    if (opposingPostId) {
+      const opposingPost = await Post.findById(opposingPostId).where({
+        isDeleted: { $ne: true }
       });
+      if (opposingPost) {
+        // Prevent self-opposition
+        if (opposingPost.journalist.toString() === req.user._id.toString()) {
+          await savedPost.deleteOne();
+          return res.status(400).json({
+            success: false,
+            message: 'You cannot oppose your own posts'
+          });
+        }
 
-      if (!savedPost.opposingPosts) savedPost.opposingPosts = [];
+        // Add opposition relationship
+        if (!savedPost.opposingPosts) savedPost.opposingPosts = [];
+        if (!opposingPost.opposedByPosts) opposingPost.opposedByPosts = [];
 
-      for (const oppData of opposingPostsArray) {
-        const targetPostId = oppData.postId;
-        const targetDescription = oppData.description || '';
-
-        const opposingPost = await Post.findById(targetPostId).where({
-          isDeleted: { $ne: true }
+        savedPost.opposingPosts.push({
+          postId: mongoose.Types.ObjectId(opposingPostId),
+          description: oppositionReason || ''
         });
 
-        if (opposingPost) {
-          console.log('[POST] Opposing post found:', {
-            id: opposingPost._id,
-            title: opposingPost.title
-          });
+        opposingPost.opposedByPosts.push({
+          postId: mongoose.Types.ObjectId(savedPost._id),
+          description: oppositionReason || ''
+        });
 
-          // Prevent self-opposition
-          if (opposingPost.journalist.toString() === req.user._id.toString()) {
-            console.log('[POST] ⚠️ Skipping self-opposition');
-            continue;
-          }
-
-          // Add to savedPost.opposingPosts
-          savedPost.opposingPosts.push({
-            postId: new mongoose.Types.ObjectId(targetPostId),
-            description: targetDescription
-          });
-
-          // Add to opposingPost.opposedByPosts (bidirectional)
-          if (!opposingPost.opposedByPosts) opposingPost.opposedByPosts = [];
-          opposingPost.opposedByPosts.push({
-            postId: new mongoose.Types.ObjectId(savedPost._id),
-            description: targetDescription
-          });
-
-          await opposingPost.save();
-          console.log('[POST] ✅ Bidirectional opposition saved for post:', targetPostId);
-        } else {
-          console.log('[POST] ❌ Opposing post not found:', targetPostId);
-        }
+        await Promise.all([savedPost.save(), opposingPost.save()]);
       }
-
-      await savedPost.save();
-      console.log('[POST] ✅ All oppositions saved successfully');
     }
 
     // Fetch the complete post with journalist information
-    let populatedPost = await Post.findById(savedPost._id)
-      .populate({
-        path: 'journalist',
-        select:
-          '_id name username avatarUrl specialties isVerified organization journalistRole followers bio'
-      })
-      .lean();
-
-    // Transform journalist AFTER query
-    if (populatedPost && populatedPost.journalist) {
-      const j = populatedPost.journalist;
-      populatedPost.journalist = {
-        _id: j._id,
-        id: j._id.toString(),
-        name: j.name || j.username || 'Journaliste inconnu',
-        username: j.username || j.name || 'unknown',
-        avatarUrl: j.avatarUrl && j.avatarUrl.trim() ? buildMediaUrl(req, j.avatarUrl) : null,
-        isVerified: j.isVerified || false,
-        organization: j.organization || '',
-        specialties: j.specialties || [],
-        verified: j.isVerified || false
-      };
-    } else if (populatedPost) {
-      populatedPost.journalist = {
-        _id: req.user._id,
-        id: req.user._id.toString(),
-        name: req.user.name || req.user.username || 'Journaliste inconnu',
-        avatarUrl: req.user.avatarUrl && req.user.avatarUrl.trim() ? buildMediaUrl(req, req.user.avatarUrl) : null,
-        isVerified: req.user.isVerified || false,
-        organization: req.user.organization || '',
-        specialties: req.user.specialties || []
-      };
-    }
+    const populatedPost = await Post.findById(savedPost._id).populate({
+      path: 'journalist',
+      select:
+        '_id name username avatarUrl specialties isVerified organization journalistRole followers',
+      transform: (doc) => {
+        if (!doc) {
+          return {
+            id: req.user._id.toString(),
+            name: req.user.name || req.user.username || 'Journaliste inconnu',
+            avatarUrl: req.user.avatarUrl && req.user.avatarUrl.trim() ? buildMediaUrl(req, req.user.avatarUrl) : null,
+            isVerified: req.user.isVerified || false,
+            organization: req.user.organization || '',
+            specialties: req.user.specialties || []
+          };
+        }
+        const obj = doc.toObject();
+        return {
+          id: obj._id.toString(),
+          name: obj.name || obj.username || 'Journaliste inconnu',
+          avatarUrl: obj.avatarUrl && obj.avatarUrl.trim() ? buildMediaUrl(req, obj.avatarUrl) : null,
+          isVerified: obj.isVerified || false,
+          organization: obj.organization || '',
+          specialties: obj.specialties || [],
+          verified: obj.isVerified || false
+        };
+      }
+    });
 
     // Update journalist's article count
     req.user.stats.postsCount += 1;
@@ -369,8 +329,33 @@ exports.getPosts = async (req, res) => {
       .populate({
         path: 'journalist',
         select:
-          '_id name username avatarUrl specialties isVerified organization journalistRole status followers bio',
-        model: User
+          '_id name username avatarUrl specialties isVerified organization journalistRole status followers',
+        model: User,
+        transform: (doc) => {
+          if (!doc) {
+            return {
+              id: null,
+              name: 'Journaliste inconnu',
+              avatarUrl: null,
+              isVerified: false,
+              organization: '',
+              specialties: []
+            };
+          }
+          const obj = doc.toObject();
+          const builtUrl = obj.avatarUrl && obj.avatarUrl.trim() ? buildMediaUrl(req, obj.avatarUrl) : null;
+          return {
+            id: obj._id.toString(),
+            name: obj.name || obj.username || 'Journaliste inconnu',
+            username: obj.username || obj.name || 'unknown',
+            avatarUrl: builtUrl,
+            isVerified: obj.isVerified || false,
+            organization: obj.organization || '',
+            specialties: obj.specialties || [],
+            history: obj.bio || '',
+            isVerified: obj.verified || false
+          };
+        }
       })
       .populate({
         path: 'opposingPosts.postId',
@@ -384,37 +369,7 @@ exports.getPosts = async (req, res) => {
       })
       .sort(sortCriteria)
       .skip((page - 1) * limit)
-      .limit(parseInt(limit))
-      .lean();
-
-    // Transform journalist AFTER query with .lean()
-    posts = posts.map(post => {
-      if (post.journalist) {
-        const j = post.journalist;
-        post.journalist = {
-          _id: j._id,
-          id: j._id.toString(),
-          name: j.name || j.username || 'Journaliste inconnu',
-          username: j.username || j.name || 'unknown',
-          avatarUrl: j.avatarUrl && j.avatarUrl.trim() ? buildMediaUrl(req, j.avatarUrl) : null,
-          isVerified: j.isVerified || false,
-          organization: j.organization || '',
-          specialties: j.specialties || [],
-          history: j.bio || '',
-          verified: j.isVerified || false
-        };
-      } else {
-        post.journalist = {
-          id: null,
-          name: 'Journaliste inconnu',
-          avatarUrl: null,
-          isVerified: false,
-          organization: '',
-          specialties: []
-        };
-      }
-      return post;
-    });
+      .limit(parseInt(limit));
 
     let total;
     // If we have a political view filter, we need to filter posts after fetching
@@ -447,7 +402,7 @@ exports.getPosts = async (req, res) => {
       
       // Get the total count after filtering
       const filteredTotal = filteredPosts.length;
-
+      
       // Apply pagination to filtered results
       posts = filteredPosts
         .sort((a, b) => {
@@ -460,15 +415,39 @@ exports.getPosts = async (req, res) => {
           return 0;
         })
         .slice((page - 1) * limit, page * limit);
-
-      // Re-populate the posts using .lean()
+      
+      // Re-populate the posts
       const postIds = posts.map(p => p._id);
       posts = await Post.find({ _id: { $in: postIds } })
         .populate({
           path: 'journalist',
           select:
-            '_id name username avatarUrl specialties isVerified organization journalistRole status followers bio',
-          model: User
+            '_id name username avatarUrl specialties isVerified organization journalistRole status followers',
+          model: User,
+          transform: (doc) => {
+            if (!doc) {
+              return {
+                id: null,
+                name: 'Journaliste inconnu',
+                avatarUrl: null,
+                isVerified: false,
+                organization: '',
+                specialties: []
+              };
+            }
+            const obj = doc.toObject();
+            return {
+              id: obj._id.toString(),
+              name: obj.name || obj.username || 'Journaliste inconnu',
+              username: obj.username || obj.name || 'unknown',
+              avatarUrl: obj.avatarUrl && obj.avatarUrl.trim() ? buildMediaUrl(req, obj.avatarUrl) : null,
+              isVerified: obj.isVerified || false,
+              organization: obj.organization || '',
+              specialties: obj.specialties || [],
+              history: obj.bio || '',
+              verified: obj.isVerified || false
+            };
+          }
         })
         .populate({
           path: 'opposingPosts.postId',
@@ -480,29 +459,8 @@ exports.getPosts = async (req, res) => {
           select: 'title imageUrl',
           model: Post
         })
-        .sort(sortCriteria)
-        .lean();
-
-      // Transform journalist AFTER query
-      posts = posts.map(post => {
-        if (post.journalist) {
-          const j = post.journalist;
-          post.journalist = {
-            _id: j._id,
-            id: j._id.toString(),
-            name: j.name || j.username || 'Journaliste inconnu',
-            username: j.username || j.name || 'unknown',
-            avatarUrl: j.avatarUrl && j.avatarUrl.trim() ? buildMediaUrl(req, j.avatarUrl) : null,
-            isVerified: j.isVerified || false,
-            organization: j.organization || '',
-            specialties: j.specialties || [],
-            history: j.bio || '',
-            verified: j.isVerified || false
-          };
-        }
-        return post;
-      });
-
+        .sort(sortCriteria);
+      
       total = filteredTotal;
     } else {
       // Normal flow without political view filter
@@ -512,7 +470,7 @@ exports.getPosts = async (req, res) => {
     // Process posts to handle journalist information, URLs, and interactions
     const postsWithAbsoluteUrls = await Promise.all(
       posts.map(async (post) => {
-        const postObj = post; // Already plain object from .lean()
+        const postObj = post.toObject();
 
         // Ensure _id is always included
         postObj._id = post._id.toString();
@@ -682,8 +640,30 @@ exports.searchPosts = async (req, res) => {
     let posts = await Post.find(queryFilter)
       .populate({
         path: 'journalist',
-        select: '_id name username avatarUrl specialties isVerified organization journalistRole status followers bio',
-        model: User
+        select: '_id name username avatarUrl specialties isVerified organization journalistRole status followers',
+        model: User,
+        transform: (doc) => {
+          if (!doc) {
+            return {
+              id: null,
+              name: 'Journaliste inconnu',
+              avatarUrl: null,
+              isVerified: false,
+              organization: '',
+              specialties: []
+            };
+          }
+          const obj = doc.toObject();
+          const builtUrl = obj.avatarUrl && obj.avatarUrl.trim() ? buildMediaUrl(req, obj.avatarUrl) : null;
+          return {
+            id: obj._id.toString(),
+            name: obj.name || obj.username || 'Journaliste inconnu',
+            avatarUrl: builtUrl,
+            isVerified: obj.isVerified || false,
+            organization: obj.organization,
+            specialties: obj.specialties || []
+          };
+        }
       })
       .populate({
         path: 'opposingPosts.post',
@@ -697,33 +677,6 @@ exports.searchPosts = async (req, res) => {
       .skip(skip)
       .limit(parseInt(limit))
       .lean();
-
-    // Transform journalist AFTER query
-    posts = posts.map(post => {
-      if (post.journalist) {
-        const j = post.journalist;
-        post.journalist = {
-          _id: j._id,
-          id: j._id.toString(),
-          name: j.name || j.username || 'Journaliste inconnu',
-          username: j.username || j.name || 'unknown',
-          avatarUrl: j.avatarUrl && j.avatarUrl.trim() ? buildMediaUrl(req, j.avatarUrl) : null,
-          isVerified: j.isVerified || false,
-          organization: j.organization || '',
-          specialties: j.specialties || []
-        };
-      } else {
-        post.journalist = {
-          id: null,
-          name: 'Journaliste inconnu',
-          avatarUrl: null,
-          isVerified: false,
-          organization: '',
-          specialties: []
-        };
-      }
-      return post;
-    });
 
     if (politicalViewFilter) {
       posts = posts.filter(post => {
@@ -843,8 +796,29 @@ exports.getPost = async (req, res) => {
       .populate({
         path: 'journalist',
         select:
-          '_id name username avatarUrl specialties isVerified organization journalistRole status bio',
-        model: User
+          'name username avatarUrl specialties isVerified organization journalistRole status',
+        transform: (doc) => {
+          if (!doc) {
+            return {
+              id: null,
+              name: 'Journaliste inconnu',
+              avatarUrl: null,
+              isVerified: false,
+              organization: '',
+              specialties: []
+            };
+          }
+          const obj = doc.toObject();
+          return {
+            id: obj._id.toString(),
+            name: obj.name || obj.username || 'Journaliste inconnu',
+            avatarUrl: obj.avatarUrl && obj.avatarUrl.trim() ? buildMediaUrl(req, obj.avatarUrl) : null,
+            isVerified: obj.isVerified || false,
+            organization: obj.organization || '',
+            specialties: obj.specialties || [],
+            isVerified: obj.verified || false
+          };
+        }
       })
       .populate({
         path: 'opposingPosts.postId',
@@ -898,33 +872,8 @@ exports.getPost = async (req, res) => {
       timestamp: new Date().toISOString()
     });
 
-    // Convert to plain object and transform journalist
+    // Convert URLs to use API_BASE_URL and format interactions for single post
     const postObj = post.toObject();
-
-    // Transform journalist AFTER converting to plain object
-    if (postObj.journalist) {
-      const j = postObj.journalist;
-      postObj.journalist = {
-        _id: j._id,
-        id: j._id.toString(),
-        name: j.name || j.username || 'Journaliste inconnu',
-        username: j.username || j.name || 'unknown',
-        avatarUrl: j.avatarUrl && j.avatarUrl.trim() ? buildMediaUrl(req, j.avatarUrl) : null,
-        isVerified: j.isVerified || false,
-        organization: j.organization || '',
-        specialties: j.specialties || [],
-        verified: j.isVerified || false
-      };
-    } else {
-      postObj.journalist = {
-        id: null,
-        name: 'Journaliste inconnu',
-        avatarUrl: null,
-        isVerified: false,
-        organization: '',
-        specialties: []
-      };
-    }
 
     // Ensure _id is always included
     postObj._id = post._id.toString();
@@ -969,8 +918,6 @@ exports.getPost = async (req, res) => {
     // journalist.avatarUrl remains as is (relative path)
 
     // Format opposition posts
-    console.log('[POST] opposedByPosts BEFORE:', JSON.stringify(postObj.opposedByPosts?.slice(0, 2)));
-
     if (postObj.opposingPosts && Array.isArray(postObj.opposingPosts)) {
       postObj.opposingPosts = postObj.opposingPosts
         .filter(op => op.postId != null)
@@ -991,7 +938,6 @@ exports.getPost = async (req, res) => {
           imageUrl: op.postId.imageUrl || '',
           description: op.description || ''
         }));
-      console.log('[POST] opposedByPosts AFTER:', JSON.stringify(postObj.opposedByPosts));
     }
 
     res.json({
@@ -1724,39 +1670,36 @@ exports.interactWithPost = async (req, res) => {
       await verifyPost.populate({
         path: 'journalist',
         select:
-          '_id name username avatarUrl specialties isVerified organization journalistRole followers bio'
+          '_id name username avatarUrl specialties isVerified organization journalistRole followers',
+        transform: (doc) => {
+          if (!doc) {
+            return {
+              id: verifyPost.journalist,
+              name: 'Journaliste inconnu',
+              avatarUrl: null,
+              isVerified: false,
+              organization: '',
+              specialties: []
+            };
+          }
+          const obj = doc.toObject();
+          return {
+            id: obj._id.toString(),
+            name: obj.name || obj.username || 'Journaliste inconnu',
+            username: obj.username || obj.name || 'unknown',
+            avatarUrl: obj.avatarUrl && obj.avatarUrl.trim() ? buildMediaUrl(req, obj.avatarUrl) : null,
+            isVerified: obj.isVerified || false,
+            organization: obj.organization || '',
+            specialties: obj.specialties || [],
+            history: obj.bio || '',
+            isVerified: obj.verified || false
+          };
+        }
       });
 
-      // Transform journalist manually
-      if (verifyPost.journalist) {
-        const j = verifyPost.journalist;
-        const journalistObj = j; // Already plain object from populate
-        verifyPost.journalist = {
-          _id: journalistObj._id,
-          id: journalistObj._id.toString(),
-          name: journalistObj.name || journalistObj.username || 'Journaliste inconnu',
-          username: journalistObj.username || journalistObj.name || 'unknown',
-          avatarUrl: journalistObj.avatarUrl && journalistObj.avatarUrl.trim() ? buildMediaUrl(req, journalistObj.avatarUrl) : null,
-          isVerified: journalistObj.isVerified || false,
-          organization: journalistObj.organization || '',
-          specialties: journalistObj.specialties || [],
-          history: journalistObj.bio || '',
-          verified: journalistObj.isVerified || false
-        };
-      } else {
-        verifyPost.journalist = {
-          id: verifyPost.journalist,
-          name: 'Journaliste inconnu',
-          avatarUrl: null,
-          isVerified: false,
-          organization: '',
-          specialties: []
-        };
-      }
-
       // Return full post data for Flutter app
-      const responsePost = verifyPost; // Already plain object
-      responsePost._id = verifyPost._id ? verifyPost._id.toString() : verifyPost._id;
+      const responsePost = verifyPost.toObject();
+      responsePost._id = verifyPost._id.toString();
 
       // Initialize dislikes if it doesn't exist (for response)
       if (!verifyPost.interactions.dislikes) {
@@ -1785,39 +1728,35 @@ exports.interactWithPost = async (req, res) => {
     // For political view endpoint, return full post data for consistency
     if (type === 'political-view' || type === 'vote_orientation') {
       // Re-fetch the post to get the latest data
-      let updatedPost = await Post.findById(post._id)
-        .populate({
-          path: 'journalist',
-          select:
-            '_id name username avatarUrl specialties isVerified organization journalistRole followers bio'
-        })
-        .lean();
-
-      // Transform journalist manually
-      if (updatedPost && updatedPost.journalist) {
-        const j = updatedPost.journalist;
-        updatedPost.journalist = {
-          _id: j._id,
-          id: j._id.toString(),
-          name: j.name || j.username || 'Journaliste inconnu',
-          username: j.username || j.name || 'unknown',
-          avatarUrl: j.avatarUrl && j.avatarUrl.trim() ? buildMediaUrl(req, j.avatarUrl) : null,
-          isVerified: j.isVerified || false,
-          organization: j.organization || '',
-          specialties: j.specialties || [],
-          history: j.bio || '',
-          verified: j.isVerified || false
-        };
-      } else if (updatedPost) {
-        updatedPost.journalist = {
-          id: post.journalist,
-          name: 'Journaliste inconnu',
-          avatarUrl: null,
-          isVerified: false,
-          organization: '',
-          specialties: []
-        };
-      }
+      const updatedPost = await Post.findById(post._id).populate({
+        path: 'journalist',
+        select:
+          '_id name username avatarUrl specialties isVerified organization journalistRole followers',
+        transform: (doc) => {
+          if (!doc) {
+            return {
+              id: post.journalist,
+              name: 'Journaliste inconnu',
+              avatarUrl: null,
+              isVerified: false,
+              organization: '',
+              specialties: []
+            };
+          }
+          const obj = doc.toObject();
+          return {
+            id: obj._id.toString(),
+            name: obj.name || obj.username || 'Journaliste inconnu',
+            username: obj.username || obj.name || 'unknown',
+            avatarUrl: obj.avatarUrl && obj.avatarUrl.trim() ? buildMediaUrl(req, obj.avatarUrl) : null,
+            isVerified: obj.isVerified || false,
+            organization: obj.organization || '',
+            specialties: obj.specialties || [],
+            history: obj.bio || '',
+            isVerified: obj.verified || false
+          };
+        }
+      });
 
       // Calculate dominant view
       let maxVotes = 0;
@@ -1834,8 +1773,8 @@ exports.interactWithPost = async (req, res) => {
         }
       );
 
-      const responsePost = updatedPost; // Already plain object from .lean()
-      responsePost._id = updatedPost._id ? updatedPost._id.toString() : updatedPost._id;
+      const responsePost = updatedPost.toObject();
+      responsePost._id = updatedPost._id.toString();
 
       // Add calculated fields
       responsePost.politicalOrientation.dominantView = dominantView;
@@ -1896,40 +1835,37 @@ exports.interactWithPost = async (req, res) => {
     await post.populate({
       path: 'journalist',
       select:
-        '_id name username avatarUrl specialties isVerified organization journalistRole bio'
+        'name username avatarUrl specialties isVerified organization journalistRole',
+      transform: (doc) => {
+        if (!doc) {
+          return {
+            id: post.journalist,
+            name: 'Journaliste inconnu',
+            avatarUrl: null,
+            isVerified: false,
+            organization: '',
+            specialties: []
+          };
+        }
+        const obj = doc.toObject();
+        return {
+          id: obj._id.toString(),
+          name: obj.name || obj.username || 'Journaliste inconnu',
+          username: obj.username || obj.name || 'unknown',
+          avatarUrl: obj.avatarUrl && obj.avatarUrl.trim() ? buildMediaUrl(req, obj.avatarUrl) : null,
+          isVerified: obj.isVerified || false,
+          organization: obj.organization || '',
+          specialties: obj.specialties || [],
+          history: obj.bio || '',
+          isVerified: obj.verified || false
+        };
+      }
     });
 
-    // Transform journalist manually
-    if (post.journalist) {
-      const j = post.journalist;
-      const journalistObj = j; // Already plain object from populate
-      post.journalist = {
-        _id: journalistObj._id,
-        id: journalistObj._id.toString(),
-        name: journalistObj.name || journalistObj.username || 'Journaliste inconnu',
-        username: journalistObj.username || journalistObj.name || 'unknown',
-        avatarUrl: journalistObj.avatarUrl && journalistObj.avatarUrl.trim() ? buildMediaUrl(req, journalistObj.avatarUrl) : null,
-        isVerified: journalistObj.isVerified || false,
-        organization: journalistObj.organization || '',
-        specialties: journalistObj.specialties || [],
-        history: journalistObj.bio || '',
-        verified: journalistObj.isVerified || false
-      };
-    } else {
-      post.journalist = {
-        id: post.journalist,
-        name: 'Journaliste inconnu',
-        avatarUrl: null,
-        isVerified: false,
-        organization: '',
-        specialties: []
-      };
-    }
-
-    const responsePost = post; // Already plain object
+    const responsePost = post.toObject();
 
     // Ensure _id is always included
-    responsePost._id = post._id ? post._id.toString() : post._id;
+    responsePost._id = post._id.toString();
 
     // Format interactions to match Flutter model expectations - SIMPLE INTEGERS
     responsePost.interactions = {
@@ -2415,10 +2351,6 @@ exports.getPoliticalVoters = async (req, res) => {
       voters = voters.filter((voter) => voter.view === orientation);
     }
 
-    // Get current user for follow status
-    const currentUserId = req.user?._id;
-    const currentUser = currentUserId ? await User.findById(currentUserId).select('followedJournalists following') : null;
-
     // Manually populate the voters
     const populatedVoters = await Promise.all(
       voters.map(async (voter) => {
@@ -2431,20 +2363,11 @@ exports.getPoliticalVoters = async (req, res) => {
             return null; // Skip if user not found
           }
 
-          // Check if current user is following this voter
-          let isFollowing = false;
-          if (currentUser && populatedUser.role === 'journalist') {
-            isFollowing = currentUser.followedJournalists?.some(id => id.toString() === populatedUser._id.toString()) || false;
-          } else if (currentUser) {
-            isFollowing = currentUser.following?.some(id => id.toString() === populatedUser._id.toString()) || false;
-          }
-
           return {
             ...populatedUser.toObject(),
             isJournalist: populatedUser.role === 'journalist',
             view: voter.view,
-            votedAt: voter.votedAt,
-            isFollowing
+            votedAt: voter.votedAt
           };
         } catch (err) {
           console.error('Error populating voter:', err);
@@ -2466,10 +2389,7 @@ exports.getPoliticalVoters = async (req, res) => {
 
     res.json({
       success: true,
-      data: {
-        voters: formattedVoters,
-        total: formattedVoters.length
-      }
+      data: formattedVoters
     });
   } catch (error) {
     console.error('[POST] Error getting political voters:', error);

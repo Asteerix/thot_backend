@@ -36,7 +36,7 @@ exports.getSavedPosts = async (req, res) => {
 
     // Now fetch the actual posts with their details
     const posts = await Post.find({ _id: { $in: paginatedIds } })
-      .populate('journalist', 'name username avatarUrl organization isVerified stats')
+      .populate('journalist', '_id name username avatarUrl organization isVerified stats')
       .sort({ createdAt: -1 });
 
     // Transform posts to ensure _id is included as a string
@@ -119,7 +119,7 @@ exports.getSavedShorts = async (req, res) => {
     }
 
     const shorts = await Post.find(query)
-      .populate('journalist', 'name username avatarUrl profileImage verified isVerified')
+      .populate('journalist', '_id name username avatarUrl profileImage verified isVerified')
       .sort({ createdAt: -1 })
       .skip((page - 1) * parseInt(limit))
       .limit(parseInt(limit));
@@ -312,7 +312,7 @@ exports.getPublicContent = async (req, res) => {
       const posts = await Post.find({
         _id: { $in: user.interactions?.publicContent?.posts || [] }
       })
-        .populate('journalist', 'name username avatarUrl organization isVerified')
+        .populate('journalist', '_id name username avatarUrl organization isVerified')
         .sort({ createdAt: -1 });
 
       publicContent.posts = posts.map(post => {
@@ -353,7 +353,7 @@ exports.getPublicContent = async (req, res) => {
         _id: { $in: user.interactions?.publicContent?.questions || [] },
         type: 'question'
       })
-        .populate('journalist', 'name username avatarUrl organization isVerified')
+        .populate('journalist', '_id name username avatarUrl organization isVerified')
         .sort({ createdAt: -1 });
 
       publicContent.questions = questions.map(question => {
@@ -863,39 +863,69 @@ exports.deleteJournalistCard = async (req, res) => {
 };
 
 exports.getFollowers = async (req, res) => {
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('[FOLLOWERS] Get followers request:', {
+    userId: req.params.id,
+    page: req.query.page,
+    limit: req.query.limit,
+    timestamp: new Date().toISOString()
+  });
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
   try {
     const { id } = req.params;
     const { page = 1, limit = 20 } = req.query;
 
+    console.log('[FOLLOWERS] Finding user...');
     const user = await User.findById(id)
       .populate({
         path: 'followers',
-        select: 'name username avatarUrl organization isVerified role followersCount followingCount',
-        options: {
-          skip: (page - 1) * parseInt(limit),
-          limit: parseInt(limit)
-        }
+        select: 'name username avatarUrl organization isVerified role followersCount followingCount bio'
       });
 
     if (!user) {
+      console.log('[FOLLOWERS] ❌ User not found:', id);
       return res.status(404).json({
         success: false,
         message: 'Utilisateur non trouvé'
       });
     }
 
-    const total = user.followers?.length || 0;
-    const followers = (user.followers || []).map(follower => ({
-      id: follower._id.toString(),
-      name: follower.name,
-      username: follower.username,
-      avatarUrl: follower.avatarUrl,
-      organization: follower.organization,
-      isVerified: follower.isVerified,
-      type: follower.role === 'journalist' ? 'journalist' : 'regular',
-      followersCount: follower.followersCount || 0,
-      followingCount: follower.followingCount || 0
-    }));
+    console.log('[FOLLOWERS] ✅ User found:', {
+      userId: user._id,
+      username: user.username,
+      totalFollowers: user.followers?.length || 0
+    });
+
+    const allFollowers = user.followers || [];
+    const total = allFollowers.length;
+    const skip = (page - 1) * parseInt(limit);
+    const paginatedFollowers = allFollowers.slice(skip, skip + parseInt(limit));
+    const followers = paginatedFollowers.map(follower => {
+      const avatarUrl = follower.avatarUrl && follower.avatarUrl.trim()
+        ? buildMediaUrl(req, follower.avatarUrl)
+        : null;
+
+      return {
+        id: follower._id.toString(),
+        _id: follower._id.toString(),
+        name: follower.name,
+        username: follower.username,
+        avatarUrl: avatarUrl,
+        organization: follower.organization,
+        isVerified: follower.isVerified,
+        isJournalist: follower.role === 'journalist',
+        type: follower.role === 'journalist' ? 'journalist' : 'regular',
+        followersCount: follower.followersCount || 0,
+        followingCount: follower.followingCount || 0
+      };
+    });
+
+    console.log('[FOLLOWERS] ✅ Returning followers:', {
+      count: followers.length,
+      total: total,
+      page: parseInt(page)
+    });
 
     res.json({
       success: true,
@@ -907,7 +937,7 @@ exports.getFollowers = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('[USER] Error getting followers:', error);
+    console.error('[FOLLOWERS] ❌ Error getting followers:', error);
     res.status(500).json({
       success: false,
       message: 'Erreur lors de la récupération des abonnés',
@@ -917,14 +947,24 @@ exports.getFollowers = async (req, res) => {
 };
 
 exports.getFollowing = async (req, res) => {
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('[FOLLOWING] Get following request:', {
+    userId: req.params.id,
+    page: req.query.page,
+    limit: req.query.limit,
+    timestamp: new Date().toISOString()
+  });
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
   try {
     const { id } = req.params;
     const { page = 1, limit = 20 } = req.query;
 
+    console.log('[FOLLOWING] Finding user...');
     const user = await User.findById(id)
       .populate({
-        path: 'followedJournalists',
-        select: 'name username avatarUrl organization isVerified role followersCount followingCount specialties',
+        path: 'following',
+        select: 'name username avatarUrl organization isVerified role followersCount followingCount specialties bio',
         options: {
           skip: (page - 1) * parseInt(limit),
           limit: parseInt(limit)
@@ -932,26 +972,50 @@ exports.getFollowing = async (req, res) => {
       });
 
     if (!user) {
+      console.log('[FOLLOWING] ❌ User not found:', id);
       return res.status(404).json({
         success: false,
         message: 'Utilisateur non trouvé'
       });
     }
 
-    const following = (user.followedJournalists || []).map(journalist => ({
-      id: journalist._id.toString(),
-      name: journalist.name,
-      username: journalist.username,
-      avatarUrl: journalist.avatarUrl,
-      organization: journalist.organization,
-      isVerified: journalist.isVerified,
-      type: 'journalist',
-      followersCount: journalist.followersCount || 0,
-      followingCount: journalist.followingCount || 0,
-      specialties: journalist.specialties || []
-    }));
+    console.log('[FOLLOWING] ✅ User found:', {
+      userId: user._id,
+      username: user.username,
+      hasFollowingField: user.following !== undefined,
+      followingType: typeof user.following,
+      followingValue: user.following,
+      totalFollowing: user.following?.length || 0
+    });
+
+    const following = (user.following || []).map(journalist => {
+      const avatarUrl = journalist.avatarUrl && journalist.avatarUrl.trim()
+        ? buildMediaUrl(req, journalist.avatarUrl)
+        : null;
+
+      return {
+        id: journalist._id.toString(),
+        _id: journalist._id.toString(),
+        name: journalist.name,
+        username: journalist.username,
+        avatarUrl: avatarUrl,
+        organization: journalist.organization,
+        isVerified: journalist.isVerified,
+        isJournalist: true,
+        type: 'journalist',
+        followersCount: journalist.followersCount || 0,
+        followingCount: journalist.followingCount || 0,
+        specialties: journalist.specialties || []
+      };
+    });
 
     const total = following.length;
+
+    console.log('[FOLLOWING] ✅ Returning following:', {
+      count: following.length,
+      total: total,
+      page: parseInt(page)
+    });
 
     res.json({
       success: true,
@@ -963,7 +1027,7 @@ exports.getFollowing = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('[USER] Error getting following:', error);
+    console.log('[FOLLOWING] ❌ Error getting following:', error);
     res.status(500).json({
       success: false,
       message: 'Erreur lors de la récupération des abonnements',

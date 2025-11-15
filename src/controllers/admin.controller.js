@@ -243,7 +243,7 @@ exports.deletePost = async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body;
 
-    const post = await Post.findById(id).populate('journalist', 'username name');
+    const post = await Post.findById(id).populate('journalist', '_id username name');
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -1310,7 +1310,7 @@ exports.getPosts = async (req, res) => {
     
     const [posts, total] = await Promise.all([
       Post.find(query)
-        .populate('journalist', 'name username email avatarUrl isVerified')
+        .populate('journalist', '_id name username email avatarUrl isVerified')
         .sort({ createdAt: -1 })
         .limit(parseInt(limit))
         .skip(skip),
@@ -1445,7 +1445,7 @@ exports.getReports = async (req, res) => {
         switch (report.targetType) {
         case 'post': {
           const post = await Post.findById(report.targetId)
-            .populate('journalist', 'name username email avatarUrl isVerified')
+            .populate('journalist', '_id name username email avatarUrl isVerified')
             .select('title type content createdAt views likes comments journalist _id');
           if (post) {
             // Get total reports count for this post
@@ -1584,7 +1584,7 @@ exports.getReportsByTarget = async (req, res) => {
       switch (targetType) {
       case 'post': {
         const post = await Post.findById(targetId)
-          .populate('journalist', 'name username email avatarUrl isVerified')
+          .populate('journalist', '_id name username email avatarUrl isVerified')
           .select('title type content createdAt views likes comments journalist');
         if (post) {
           targetDetails = {
