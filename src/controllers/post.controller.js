@@ -37,13 +37,29 @@ exports.createPost = async (req, res) => {
     const { type } = req.body;
 
     // Validate required fields based on type
-    // Validate required fields based on type
     if (type === 'video' || type === 'short') {
       if (!req.body.videoUrl) {
         return res.status(400).json({
           success: false,
           message: `Video is required for ${type}s`
         });
+      }
+
+      // Validate duration
+      const duration = req.body.metadata?.[type]?.duration;
+      if (duration) {
+        if (type === 'short' && duration > 30) {
+          return res.status(400).json({
+            success: false,
+            message: 'Les shorts ne peuvent pas dépasser 30 secondes'
+          });
+        }
+        if (type === 'video' && duration > 300) {
+          return res.status(400).json({
+            success: false,
+            message: 'Les vidéos ne peuvent pas dépasser 5 minutes (300 secondes)'
+          });
+        }
       }
     }
 
@@ -574,13 +590,36 @@ exports.getPosts = async (req, res) => {
           postObj.journalist = formatUser(postObj.journalist, req, req.user);
         }
 
+        // Format opposition posts - FILTER OUT non-populated posts
+        if (postObj.opposingPosts && Array.isArray(postObj.opposingPosts)) {
+          postObj.opposingPosts = postObj.opposingPosts
+            .filter(op => op.postId != null && typeof op.postId === 'object' && op.postId._id && op.postId.title)
+            .map(op => ({
+              postId: op.postId._id.toString(),
+              title: op.postId.title,
+              imageUrl: op.postId.imageUrl || '',
+              description: op.description || ''
+            }));
+        }
+
+        if (postObj.opposedByPosts && Array.isArray(postObj.opposedByPosts)) {
+          postObj.opposedByPosts = postObj.opposedByPosts
+            .filter(op => op.postId != null && typeof op.postId === 'object' && op.postId._id && op.postId.title)
+            .map(op => ({
+              postId: op.postId._id.toString(),
+              title: op.postId.title,
+              imageUrl: op.postId.imageUrl || '',
+              description: op.description || ''
+            }));
+        }
+
         // Keep URLs as relative paths
         // For videos, don't set a default imageUrl if thumbnailUrl exists
         if (!postObj.imageUrl && postObj.type !== 'video') {
           postObj.imageUrl = '/uploads/default-post-image.png';
         }
         // videoUrl and thumbnailUrl remain as is (relative paths)
-        
+
         // journalist avatarUrl is now converted to absolute URL
 
         return postObj;
@@ -973,7 +1012,7 @@ exports.getPost = async (req, res) => {
 
     if (postObj.opposingPosts && Array.isArray(postObj.opposingPosts)) {
       postObj.opposingPosts = postObj.opposingPosts
-        .filter(op => op.postId != null)
+        .filter(op => op.postId != null && op.postId._id && op.postId.title)
         .map(op => ({
           postId: op.postId._id?.toString() || op.postId.toString(),
           title: op.postId.title || '',
@@ -983,14 +1022,30 @@ exports.getPost = async (req, res) => {
     }
 
     if (postObj.opposedByPosts && Array.isArray(postObj.opposedByPosts)) {
+      console.log('[POST] opposedByPosts filtering - original count:', postObj.opposedByPosts.length);
+      postObj.opposedByPosts.forEach((op, idx) => {
+        console.log(`[POST] opposedByPosts[${idx}]:`, {
+          hasPostId: !!op.postId,
+          postIdType: typeof op.postId,
+          hasId: op.postId?._id !== undefined,
+          hasTitle: op.postId?.title !== undefined,
+          postIdValue: op.postId
+        });
+      });
+
       postObj.opposedByPosts = postObj.opposedByPosts
-        .filter(op => op.postId != null)
+        .filter(op => {
+          const isValid = op.postId != null && typeof op.postId === 'object' && op.postId._id && op.postId.title;
+          console.log(`[POST] Filter result for ${op.postId?._id || 'unknown'}: ${isValid}`);
+          return isValid;
+        })
         .map(op => ({
-          postId: op.postId._id?.toString() || op.postId.toString(),
-          title: op.postId.title || '',
+          postId: op.postId._id.toString(),
+          title: op.postId.title,
           imageUrl: op.postId.imageUrl || '',
           description: op.description || ''
         }));
+      console.log('[POST] opposedByPosts AFTER filtering - count:', postObj.opposedByPosts.length);
       console.log('[POST] opposedByPosts AFTER:', JSON.stringify(postObj.opposedByPosts));
     }
 

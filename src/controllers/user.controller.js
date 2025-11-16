@@ -901,10 +901,16 @@ exports.getFollowers = async (req, res) => {
     const total = allFollowers.length;
     const skip = (page - 1) * parseInt(limit);
     const paginatedFollowers = allFollowers.slice(skip, skip + parseInt(limit));
+
+    const currentUserId = req.user?._id;
     const followers = paginatedFollowers.map(follower => {
       const avatarUrl = follower.avatarUrl && follower.avatarUrl.trim()
         ? buildMediaUrl(req, follower.avatarUrl)
         : null;
+
+      const isFollowing = currentUserId && follower.followers
+        ? follower.followers.some(f => f.toString() === currentUserId.toString())
+        : false;
 
       return {
         id: follower._id.toString(),
@@ -917,7 +923,8 @@ exports.getFollowers = async (req, res) => {
         isJournalist: follower.role === 'journalist',
         type: follower.role === 'journalist' ? 'journalist' : 'regular',
         followersCount: follower.followersCount || 0,
-        followingCount: follower.followingCount || 0
+        followingCount: follower.followingCount || 0,
+        isFollowing: isFollowing
       };
     });
 
@@ -988,10 +995,15 @@ exports.getFollowing = async (req, res) => {
       totalFollowing: user.following?.length || 0
     });
 
+    const currentUserId = req.user?._id;
     const following = (user.following || []).map(journalist => {
       const avatarUrl = journalist.avatarUrl && journalist.avatarUrl.trim()
         ? buildMediaUrl(req, journalist.avatarUrl)
         : null;
+
+      const isFollowing = currentUserId && journalist.followers
+        ? journalist.followers.some(f => f.toString() === currentUserId.toString())
+        : false;
 
       return {
         id: journalist._id.toString(),
@@ -1005,7 +1017,8 @@ exports.getFollowing = async (req, res) => {
         type: 'journalist',
         followersCount: journalist.followersCount || 0,
         followingCount: journalist.followingCount || 0,
-        specialties: journalist.specialties || []
+        specialties: journalist.specialties || [],
+        isFollowing: isFollowing
       };
     });
 

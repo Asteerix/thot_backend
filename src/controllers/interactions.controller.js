@@ -424,6 +424,19 @@ exports.votePoliticalOrientation = async (req, res) => {
     // Use helper for consistent format
     responseData.interactions = ResponseHelper.formatInteractions(updatedPost, userId);
 
+    // Emit socket event for real-time update
+    const socketService = require('../services/socket.service');
+    if (socketService.io) {
+      socketService.io.to(`post:${postId}`).emit('post:political_vote_updated', {
+        postId: postId,
+        userVotes: responseData.politicalOrientation.userVotes,
+        dominantView: dominantView,
+        totalVotes: totalVotes,
+        timestamp: new Date()
+      });
+      console.log('[POLITICAL_VOTE] Socket event emitted to post:' + postId);
+    }
+
     res.json({
       success: true,
       data: responseData

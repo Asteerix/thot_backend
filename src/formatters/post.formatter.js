@@ -126,33 +126,27 @@ const formatPost = (post, req, currentUser = null) => {
     postObj.metadata = formatMetadata(postObj.metadata, postObj.type);
   }
 
-  // Format opposition posts
+  // Format opposition posts - FILTER OUT non-populated posts
   if (postObj.opposingPosts) {
-    postObj.opposingPosts = postObj.opposingPosts.map(opp => {
-      if (opp.postId && typeof opp.postId === 'object') {
-        return {
-          postId: opp.postId._id,
-          title: opp.postId.title,
-          imageUrl: buildMediaUrl(req, opp.postId.imageUrl),
-          description: opp.description
-        };
-      }
-      return opp;
-    });
+    postObj.opposingPosts = postObj.opposingPosts
+      .filter(opp => opp.postId && typeof opp.postId === 'object' && opp.postId._id)
+      .map(opp => ({
+        postId: opp.postId._id,
+        title: opp.postId.title,
+        imageUrl: buildMediaUrl(req, opp.postId.imageUrl),
+        description: opp.description
+      }));
   }
 
   if (postObj.opposedByPosts) {
-    postObj.opposedByPosts = postObj.opposedByPosts.map(opp => {
-      if (opp.postId && typeof opp.postId === 'object') {
-        return {
-          postId: opp.postId._id,
-          title: opp.postId.title,
-          imageUrl: buildMediaUrl(req, opp.postId.imageUrl),
-          description: opp.description
-        };
-      }
-      return opp;
-    });
+    postObj.opposedByPosts = postObj.opposedByPosts
+      .filter(opp => opp.postId && typeof opp.postId === 'object' && opp.postId._id)
+      .map(opp => ({
+        postId: opp.postId._id,
+        title: opp.postId.title,
+        imageUrl: buildMediaUrl(req, opp.postId.imageUrl),
+        description: opp.description
+      }));
   }
 
   // Format related posts
